@@ -1,4 +1,5 @@
 const express = require('express');
+const cors = require('cors'); // เพิ่ม cors
 const { Client, middleware } = require('@line/bot-sdk');
 const admin = require('firebase-admin');
 const dotenv = require('dotenv');
@@ -29,6 +30,12 @@ const config = {
 
 const client = new Client(config);
 const app = express();
+
+app.use(cors({
+  origin: 'http://localhost:8081', // หรือใช้ '*' ถ้าจะเปิดทุก origin
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 
 app.use(express.json());
 
@@ -78,18 +85,16 @@ app.post('/notify', async (req, res) => {
   }
 
   try {
-    // ดึง userId ทั้งหมดจาก Firestore (collection 'lineuser' หรือ 'users')
     const usersSnapshot = await db.collection('lineUsers').get();
-    console.log("User list: ",usersSnapshot)
+    console.log("User list: ", usersSnapshot);
 
     if (usersSnapshot.empty) {
       return res.status(404).json({ success: false, error: 'No users found' });
     }
 
-    // ส่งข้อความไปยังทุก userId ที่ดึงมา
     const promises = [];
     usersSnapshot.forEach(doc => {
-      const userId = doc.id; // หรือ doc.data().userId ถ้าเก็บใน field
+      const userId = doc.id; // หรือ doc.data().userId
       promises.push(client.pushMessage(userId, {
         type: 'text',
         text: message,
@@ -104,7 +109,6 @@ app.post('/notify', async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
-
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
