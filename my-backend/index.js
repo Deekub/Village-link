@@ -167,7 +167,7 @@ async function sendSmsViaThaiBulkSms(phoneNumber, message) {
         const requestBody = new URLSearchParams({
             msisdn: phoneNumber,
             message: message,
-            sender: THAI_BULK_SMS_SENDER_NAME,
+            // sender: THAI_BULK_SMS_SENDER_NAME,
         }).toString();
 
         console.log("Sending SMS Request Body:", requestBody);
