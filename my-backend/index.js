@@ -10,8 +10,11 @@ app.use(express.json());
 app.post('/notify', async (req, res) => {
   const { message } = req.body;
 
+  console.log('[DEBUG] รับข้อความ:', message);
+  console.log('[DEBUG] Token:', process.env.LINE_NOTIFY_TOKEN);
+
   try {
-    await axios.post(
+    const result = await axios.post(
       'https://notify-api.line.me/api/notify',
       new URLSearchParams({ message }),
       {
@@ -22,9 +25,10 @@ app.post('/notify', async (req, res) => {
       }
     );
 
+    console.log('[DEBUG] LINE response:', result.data);
     res.status(200).send({ success: true });
   } catch (err) {
-    console.error('Error:', err.message);
+    console.error('[ERROR]', err.response?.data || err.message);
     res.status(500).send({ success: false });
   }
 });
