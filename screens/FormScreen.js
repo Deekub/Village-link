@@ -1,22 +1,22 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, Button, StyleSheet, Alert, Platform } from 'react-native';
+import { View, Text, TextInput, StyleSheet, Alert, Platform, TouchableOpacity } from 'react-native';
 import RNPickerSelect from 'react-native-picker-select';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { collection, addDoc, Timestamp } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
-import { ScrollView } from 'react-native-web';
+import { collection, addDoc, Timestamp } from 'firebase/firestore'; // นำกลับมา
+import { db } from '../firebaseConfig'; // นำกลับมา
+import { ScrollView } from 'react-native';
 
 const villages = [
-    { label: 'หมู่ 1', value: 'หมู่ 1' },
-    { label: 'หมู่ 2', value: 'หมู่ 2' },
-    { label: 'หมู่ 3', value: 'หมู่ 3' },
-    { label: 'หมู่ 4', value: 'หมู่ 4' },
-    { label: 'หมู่ 5', value: 'หมู่ 5' },
-    { label: 'หมู่ 6', value: 'หมู่ 6' },
-    { label: 'หมู่ 7', value: 'หมู่ 7' },
-    { label: 'หมู่ 8', value: 'หมู่ 8' },
-    { label: 'หมู่ 9', value: 'หมู่ 9' },
-    { label: 'หมู่ 10', value: 'หมู่ 10' },
+    { label: 'หมู่ 1', value: '1' },
+    { label: 'หมู่ 2', value: '2' },
+    { label: 'หมู่ 3', value: '3' },
+    { label: 'หมู่ 4', value: '4' },
+    { label: 'หมู่ 5', value: '5' },
+    { label: 'หมู่ 6', value: '6' },
+    { label: 'หมู่ 7', value: '7' },
+    { label: 'หมู่ 8', value: '8' },
+    { label: 'หมู่ 9', value: '9' },
+    { label: 'หมู่ 10', value: '10' },
 ];
 
 const topics = [
@@ -28,6 +28,7 @@ const topics = [
 const actions = [
     { label: 'ตัดไฟ', value: 'ตัดไฟ' },
     { label: 'ตัดน้ำ', value: 'ตัดน้ำ' },
+    { label: 'ซ่อมสายไฟ', value: 'ซ่อมสายไฟ' },
     { label: 'อื่นๆ', value: 'อื่นๆ' },
 ];
 
@@ -50,19 +51,16 @@ const showAlert = (message) => {
     }
 };
 
-// แปลงวันที่เป็น วว/ดด/ปปปป
-const formatDate = (date) => {
-    const dd = String(date.getDate()).padStart(2, '0');
-    const mm = String(date.getMonth() + 1).padStart(2, '0');
-    const yyyy = date.getFullYear();
-    return `${dd}/${mm}/${yyyy}`;
+// แปลงวันที่สำหรับแสดงผล
+const displayDate = (date) => {
+    const d = new Date(date);
+    return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
 };
 
-// แปลงเวลาเป็น hh:mm (24 ชั่วโมง)
-const formatTime24 = (date) => {
-    const hh = String(date.getHours()).padStart(2, '0');
-    const min = String(date.getMinutes()).padStart(2, '0');
-    return `${hh}:${min}`;
+// แปลงเวลาสำหรับแสดงผล
+const displayTime = (date) => {
+    const d = new Date(date);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 };
 
 
@@ -77,116 +75,140 @@ export default function FormScreen() {
     const [notifyTime, setNotifyTime] = useState(new Date());
     const [showDatePicker, setShowDatePicker] = useState(false);
     const [showTimePicker, setShowTimePicker] = useState(false);
-    const [repeatCount, setRepeatCount] = useState('');
+    const [repeatCount, setRepeatCount] = useState('0');
     const [frequencyHour, setFrequencyHour] = useState('0');
     const [frequencyMinute, setFrequencyMinute] = useState('0');
+    const [sendSms, setSendSms] = useState(false);
+
+    const onChangeDate = (event, selectedDate) => {
+        const currentDate = selectedDate || notifyDate;
+        setShowDatePicker(Platform.OS === 'ios');
+        setNotifyDate(currentDate);
+    };
+
+    const onChangeTime = (event, selectedTime) => {
+        const currentTime = selectedTime || notifyTime;
+        setShowTimePicker(Platform.OS === 'ios');
+        setNotifyTime(currentTime);
+    };
 
     const handleSubmit = async () => {
-        if (!village || !topic || !action || !detail || !repeatCount) {
-            showAlert('กรุณากรอกข้อมูลให้ครบถ้วน');
+        // ตรวจสอบข้อมูลเบื้องต้น
+        if (!village || !topic || !action || !detail) {
+            showAlert('กรุณากรอกข้อมูล หัวข้อ, การจัดการ, รายละเอียด, และเลือกหมู่บ้าน ให้ครบถ้วน');
             return;
         }
 
-        const fh = parseInt(frequencyHour) || 0;
-        const fm = parseInt(frequencyMinute) || 0;
         const rc = parseInt(repeatCount);
+        const fh = parseInt(frequencyHour);
+        const fm = parseInt(frequencyMinute);
+        const fih = parseInt(fixHour);
+        const fim = parseInt(fixMinute);
 
-        if (fh === 0 && fm === 0) {
-            // อนุญาตถ้า repeatCount มากกว่า 1 ให้ส่งได้
-        } else if (fh === 0 && fm > 0 && fm < 15) {
-            showAlert('กรุณาระบุความถี่อย่างน้อย 15 นาที');
+        if (isNaN(rc) || rc < 0) {
+            showAlert('จำนวนครั้งการแจ้งเตือนต้องเป็นตัวเลขและมากกว่าหรือเท่ากับ 0');
             return;
         }
 
+        if (rc > 1 && (fh === 0 && fm < 15)) {
+             showAlert('ถ้ามีการแจ้งเตือนมากกว่า 1 ครั้ง, กรุณาระบุความถี่อย่างน้อย 15 นาที');
+             return;
+        }
+
+        if (isNaN(fih) || isNaN(fim) || fih < 0 || fim < 0) {
+            showAlert('เวลาดำเนินการโดยประมาณต้องเป็นตัวเลขและมากกว่าหรือเท่ากับ 0');
+            return;
+        }
+        if (fih === 0 && fim === 0) {
+            showAlert('กรุณาระบุเวลาดำเนินการโดยประมาณ (ชั่วโมง/นาที)');
+            return;
+        }
+
+
+        // รวมวันที่และเวลาที่ดำเนินการ
         const combinedDateTime = combineDateAndTime(notifyDate, notifyTime);
-        const finishRepairTime = new Date(
-            combinedDateTime.getTime() + (parseInt(fixHour) * 60 + parseInt(fixMinute)) * 60 * 1000
-        );
-
-        // แปลงวันที่และเวลาให้ตรงตามที่ขอ
-        const notifyDateFormatted = formatDate(combinedDateTime);
-        const notifyTimeFormatted = formatTime24(combinedDateTime);
-        const finishRepairTimeFormatted = formatTime24(finishRepairTime);
-
-        const frequencyText = `ทุก ${fh} ชั่วโมง ${fm} นาที`;
-
-
-        const fixtimereturn = ({ fixHour }, { fixMinute }) => {
-            const hour = parseInt(fixHour)
-            const min = parseInt(fixMinute);
-            if (hour == 0) {
-                console.log("No hour");
-                return `${fixMinute} นาที`;
-            } else {
-                console.log("have hour", hour);
-                return `${fixHour} ชั่วโมง ${fixMinute} นาที`;
-            }
-        };
-
-        const fixTimeText = fixtimereturn({ fixHour }, { fixMinute });
-
-        console.log("fixtime text :", fixTimeText)
-
-        const messageText = `📢 แจ้งข่าวบริเวณ ${village} 📢
-🏷️หัวข้อ: ${topic}
-⚙️การจัดการ: ${action}
-📝รายละเอียด: ${detail}
-📅 ณ วันที่: ${notifyDateFormatted}
-⏰เวลา: ${notifyTimeFormatted} น.
-⏰ใช้เวลา : ${fixTimeText}
-📅เวลาเสร็จสิ้นประมาณ: ${finishRepairTimeFormatted} น.`;
 
         try {
+            // *** บันทึกข้อมูลลงใน collection 'news' ที่ Frontend ***
             await addDoc(collection(db, 'news'), {
                 village,
                 topic,
                 action,
                 detail,
                 notifyTime: Timestamp.fromDate(combinedDateTime),
+                fixHour: fih,
+                fixMinute: fim,
                 repeatCount: rc,
-                frequency: frequencyText,
-                fixTime: fixTimeText,
+                frequencyHour: fh,
+                frequencyMinute: fm,
+                sendSms: sendSms, // บันทึกสถานะการส่ง SMS ใน Firestore ของ Frontend ด้วย
                 createdAt: Timestamp.now(),
-                sent: false,
+                sent: true, // ตั้งค่าเป็น true เพราะ Frontend ถือว่าส่งข้อมูลไปยังระบบแล้ว (Backend จะจัดการการส่งจริง)
             });
 
-            await fetch('https://village-link.onrender.com/notify', {
+            // *** เรียก Backend เพื่อส่ง LINE และ SMS ***
+            const response = await fetch('https://village-link.onrender.com/notify', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    message: messageText,
+                    village,
+                    topic,
+                    action,
+                    detail,
+                    notifyTime: combinedDateTime.toISOString(), // ส่งเป็น ISO string
+                    fixHour: fih,
+                    fixMinute: fim,
+                    repeatCount: rc,
+                    frequencyHour: fh,
+                    frequencyMinute: fm,
+                    sendSms,
                 }),
             });
 
-            showAlert('บันทึกข้อมูลเรียบร้อย');
+            const data = await response.json();
 
-            // เคลียร์ฟอร์ม
-            setVillage('');
-            setTopic('');
-            setAction('');
-            setDetail('');
-            setFixHour('0');
-            setFixMinute('0');
-            setRepeatCount('');
-            setFrequencyHour('0');
-            setFrequencyMinute('0');
-            setNotifyDate(new Date());
-            setNotifyTime(new Date());
+            if (response.ok) {
+                showAlert(`ส่งข่าวสารเรียบร้อย!\nLINE: ${data.lineSentCount} ข้อความ\nSMS: ${data.smsNumbersNotified} ข้อความ`);
+                // เคลียร์ฟอร์มเมื่อส่งสำเร็จ
+                setVillage('');
+                setTopic('');
+                setAction('');
+                setDetail('');
+                setFixHour('0');
+                setFixMinute('0');
+                setRepeatCount('0');
+                setFrequencyHour('0');
+                setFrequencyMinute('0');
+                setSendSms(false);
+                setNotifyDate(new Date());
+                setNotifyTime(new Date());
+            } else {
+                showAlert(`เกิดข้อผิดพลาดในการส่ง: ${data.error || response.statusText}`);
+                console.error("Backend Error:", data.details || data.error);
+            }
         } catch (err) {
-            console.error(err);
-            showAlert('เกิดข้อผิดพลาด');
+            console.error('Error in handleSubmit:', err); // Log ข้อผิดพลาดให้ละเอียดขึ้น
+            showAlert('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้ หรือเกิดข้อผิดพลาดในการส่งข้อมูล');
         }
     };
 
     return (
-        <ScrollView>
+        <ScrollView contentContainerStyle={styles.scrollContainer}>
             <View style={styles.container}>
+                {/* Header */}
+                <View style={styles.header}>
+                    <Text style={styles.headerVillage}>ตำบลสุรนารี</Text>
+                    <Text style={styles.headerVillage}>หมู่บ้านก้าวสุระ</Text>
+                </View>
+
+                {/* Dropdowns */}
                 <Text style={styles.label}>เลือกหมู่บ้าน</Text>
                 <RNPickerSelect
                     onValueChange={setVillage}
                     value={village}
                     items={villages}
                     placeholder={{ label: 'เลือกหมู่บ้าน', value: '' }}
+                    style={pickerSelectStyles}
                 />
 
                 <Text style={styles.label}>หัวข้อ</Text>
@@ -195,195 +217,340 @@ export default function FormScreen() {
                     value={topic}
                     items={topics}
                     placeholder={{ label: 'เลือกหัวข้อ', value: '' }}
+                    style={pickerSelectStyles}
                 />
 
-                <Text style={styles.label}>แจ้งการจัดการ</Text>
+                <Text style={styles.label}>การจัดการ</Text>
                 <RNPickerSelect
                     onValueChange={setAction}
                     value={action}
                     items={actions}
-                    placeholder={{ label: 'เลือกการจัดการ', value: '' }}
+                    placeholder={{ label: 'แจ้งการจัดการ', value: '' }}
+                    style={pickerSelectStyles}
                 />
 
                 <Text style={styles.label}>รายละเอียด</Text>
                 <TextInput
-                    style={[styles.input, { height: 100 }]}
+                    style={[styles.input, { height: 100, textAlignVertical: 'top' }]}
                     value={detail}
                     onChangeText={setDetail}
                     multiline
                     placeholder="รายละเอียดเพิ่มเติม"
                 />
 
-                <Text style={styles.label}>เวลาจัดการโดยประมาณ</Text>
-                <View style={styles.rowWrap}>
-                    <View style={styles.timeGroup}>
-                        <TextInput
-                            style={styles.timeInput}
-                            value={fixHour}
-                            onChangeText={setFixHour}
-                            keyboardType="numeric"
-                            placeholder="ชั่วโมง"
-                        />
-                        <Text style={styles.timeLabel}>ชั่วโมง</Text>
-                    </View>
-                    <View style={styles.timeGroup}>
-                        <TextInput
-                            style={styles.timeInput}
-                            value={fixMinute}
-                            onChangeText={setFixMinute}
-                            keyboardType="numeric"
-                            placeholder="นาที"
-                        />
-                        <Text style={styles.timeLabel}>นาที</Text>
-                    </View>
-                </View>
-
-                <Text style={styles.label}>เลือกวันที่แจ้ง</Text>
-                {Platform.OS === 'web' ? (
-                    <input
-                        type="date"
-                        value={notifyDate.toISOString().split('T')[0]}
-                        onChange={(e) => setNotifyDate(new Date(e.target.value + 'T00:00'))}
-                        style={styles.webInput}
-                    />
-                ) : (
-                    <>
-                        <Button title={notifyDate.toLocaleDateString()} onPress={() => setShowDatePicker(true)} />
-                        {showDatePicker && (
-                            <DateTimePicker
-                                value={notifyDate}
-                                mode="date"
-                                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                                onChange={(event, date) => {
-                                    setShowDatePicker(false);
-                                    if (date) setNotifyDate(date);
-                                }}
+                {/* วันที่และเวลาดำเนินการ */}
+                <View style={styles.dateTimeContainer}>
+                    <View style={styles.dateTimeGroup}>
+                        <Text style={styles.label}>เลือกวันที่แจ้ง</Text>
+                        {Platform.OS === 'web' ? (
+                            <input
+                                type="date"
+                                value={notifyDate.toISOString().split('T')[0]}
+                                onChange={(e) => setNotifyDate(new Date(e.target.value + 'T00:00:00'))}
+                                style={styles.webDateInput}
                             />
+                        ) : (
+                            <>
+                                <TouchableOpacity style={styles.datePickerButton} onPress={() => setShowDatePicker(true)}>
+                                    <Text style={styles.datePickerButtonText}>{displayDate(notifyDate)}</Text>
+                                </TouchableOpacity>
+                                {showDatePicker && (
+                                    <DateTimePicker
+                                        value={notifyDate}
+                                        mode="date"
+                                        display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                                        onChange={onChangeDate}
+                                    />
+                                )}
+                            </>
                         )}
-                    </>
-                )}
+                    </View>
 
-                <Text style={styles.label}>เลือกเวลาที่ดำเนินการ</Text>
-                {Platform.OS === 'web' ? (
-                    <input
-                        type="time"
-                        value={notifyTime.toTimeString().substring(0, 5)}
-                        onChange={(e) => {
-                            const [hours, minutes] = e.target.value.split(':');
-                            const newTime = new Date();
-                            newTime.setHours(Number(hours));
-                            newTime.setMinutes(Number(minutes));
-                            setNotifyTime(newTime);
-                        }}
-                        style={styles.webInput}
-                    />
-                ) : (
-                    <>
-                        <Button title={notifyTime.toLocaleTimeString()} onPress={() => setShowTimePicker(true)} />
-                        {showTimePicker && (
-                            <DateTimePicker
-                                value={notifyTime}
-                                mode="time"
-                                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                                onChange={(event, date) => {
-                                    setShowTimePicker(false);
-                                    if (date) setNotifyTime(date);
+                    <View style={styles.dateTimeGroup}>
+                        <Text style={styles.label}>เลือกเวลาดำเนินการ</Text>
+                        {Platform.OS === 'web' ? (
+                            <input
+                                type="time"
+                                value={displayTime(notifyTime)}
+                                onChange={(e) => {
+                                    const [hours, minutes] = e.target.value.split(':');
+                                    const newTime = new Date();
+                                    newTime.setHours(Number(hours));
+                                    newTime.setMinutes(Number(minutes));
+                                    setNotifyTime(newTime);
                                 }}
+                                style={styles.webTimeInput}
                             />
+                        ) : (
+                            <>
+                                <TouchableOpacity style={styles.datePickerButton} onPress={() => setShowTimePicker(true)}>
+                                    <Text style={styles.datePickerButtonText}>{displayTime(notifyTime)}</Text>
+                                </TouchableOpacity>
+                                {showTimePicker && (
+                                    <DateTimePicker
+                                        value={notifyTime}
+                                        mode="time"
+                                        display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                                        onChange={onChangeTime}
+                                    />
+                                )}
+                            </>
                         )}
-                    </>
-                )}
-
-                <Text style={styles.label}>จำนวนครั้งการแจ้งเตือน</Text>
-                <TextInput
-                    style={styles.input}
-                    value={repeatCount}
-                    onChangeText={setRepeatCount}
-                    keyboardType="numeric"
-                    placeholder="เช่น 1, 2, 3"
-                />
-
-                <Text style={styles.label}>ความถี่ในการแจ้งเตือน (เลือกได้)</Text>
-                <View style={styles.rowWrap}>
-                    <View style={styles.timeGroup}>
-                        <TextInput
-                            style={styles.timeInput}
-                            value={frequencyHour}
-                            onChangeText={setFrequencyHour}
-                            keyboardType="numeric"
-                            placeholder="ชั่วโมง"
-                        />
-                        <Text style={styles.timeLabel}>ชั่วโมง</Text>
-                    </View>
-                    <View style={styles.timeGroup}>
-                        <TextInput
-                            style={styles.timeInput}
-                            value={frequencyMinute}
-                            onChangeText={setFrequencyMinute}
-                            keyboardType="numeric"
-                            placeholder="นาที"
-                        />
-                        <Text style={styles.timeLabel}>นาที (ขั้นต่ำ 15 นาที)</Text>
                     </View>
                 </View>
-                <View style={{ marginTop: 20 }}>
-                    <Button title="ส่งข่าว" onPress={handleSubmit} />
+
+                {/* เวลาดำเนินการโดยประมาณ */}
+                <Text style={styles.label}>เวลาดำเนินการโดยประมาณ</Text>
+                <View style={styles.inlineInputs}>
+                    <TextInput
+                        style={styles.smallInput}
+                        value={fixHour}
+                        onChangeText={text => setFixHour(text.replace(/[^0-9]/g, ''))}
+                        keyboardType="numeric"
+                        placeholder="0"
+                    />
+                    <Text style={styles.unitText}>ชั่วโมง</Text>
+                    <TextInput
+                        style={styles.smallInput}
+                        value={fixMinute}
+                        onChangeText={text => setFixMinute(text.replace(/[^0-9]/g, ''))}
+                        keyboardType="numeric"
+                        placeholder="0"
+                    />
+                    <Text style={styles.unitText}>นาที</Text>
                 </View>
+
+                {/* การแจ้งเตือน */}
+                <Text style={styles.label}>การแจ้งเตือน</Text>
+                <View style={styles.inlineInputs}>
+                    <TextInput
+                        style={styles.smallInput}
+                        value={repeatCount}
+                        onChangeText={text => setRepeatCount(text.replace(/[^0-9]/g, ''))}
+                        keyboardType="numeric"
+                        placeholder="0"
+                    />
+                    <Text style={styles.unitText}>ครั้ง</Text>
+                    <Text style={styles.unitText}>ความถี่ในการแจ้งเตือน :</Text>
+                    <TextInput
+                        style={styles.smallInput}
+                        value={frequencyHour}
+                        onChangeText={text => setFrequencyHour(text.replace(/[^0-9]/g, ''))}
+                        keyboardType="numeric"
+                        placeholder="0"
+                    />
+                    <Text style={styles.unitText}>ชั่วโมง</Text>
+                    <TextInput
+                        style={styles.smallInput}
+                        value={frequencyMinute}
+                        onChangeText={text => setFrequencyMinute(text.replace(/[^0-9]/g, ''))}
+                        keyboardType="numeric"
+                        placeholder="0"
+                    />
+                    <Text style={styles.unitText}>นาที</Text>
+                </View>
+
+                {/* Checkbox ส่ง SMS */}
+                <View style={styles.checkboxContainer}>
+                    <TouchableOpacity
+                        style={[styles.checkbox, sendSms && styles.checkboxChecked]}
+                        onPress={() => setSendSms(!sendSms)}
+                    >
+                        {sendSms && <Text style={styles.checkboxCheckmark}>✓</Text>}
+                    </TouchableOpacity>
+                    <Text style={styles.checkboxLabel}>ส่ง SMS</Text>
+                </View>
+
+                {/* ปุ่มส่งข่าวสาร */}
+                <TouchableOpacity style={styles.submitButton} onPress={handleSubmit}>
+                    <Text style={styles.submitButtonText}>ส่งข่าวสาร</Text>
+                </TouchableOpacity>
             </View>
         </ScrollView>
     );
 }
 
 const styles = StyleSheet.create({
-    container: { padding: 20 },
-    label: { marginTop: 15, marginBottom: 5, fontWeight: 'bold' },
+    scrollContainer: {
+        flexGrow: 1,
+        justifyContent: 'center',
+        paddingVertical: 20,
+        backgroundColor: '#f0f2f5',
+    },
+    container: {
+        padding: 20,
+        backgroundColor: '#fff',
+        borderRadius: 10,
+        marginHorizontal: 15,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 8,
+        elevation: 5,
+    },
+    header: {
+        marginBottom: 20,
+        alignItems: 'center',
+        backgroundColor: '#e6e6fa',
+        paddingVertical: 10,
+        borderRadius: 8,
+    },
+    headerVillage: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        color: '#4b0082',
+    },
+    label: {
+        marginTop: 15,
+        marginBottom: 8,
+        fontWeight: 'bold',
+        fontSize: 16,
+        color: '#333',
+    },
     input: {
         borderWidth: 1,
-        borderColor: '#aaa',
+        borderColor: '#ccc',
         borderRadius: 8,
-        padding: 10,
-        backgroundColor: '#fff',
+        padding: 12,
+        backgroundColor: '#f9f9f9',
+        fontSize: 16,
+        color: '#333',
     },
-    webInput: {
+    webDateInput: {
+        height: 40,
+        borderWidth: 1,
+        borderColor: '#ccc',
+        borderRadius: 8,
         padding: 10,
         fontSize: 16,
-        borderWidth: 1,
-        borderColor: '#aaa',
-        borderRadius: 8,
+        backgroundColor: '#f9f9f9',
+        color: '#333',
         width: '100%',
-        marginBottom: 15,
     },
-    subLabel: {
-        marginTop: 10,
-        marginBottom: 5,
-        fontWeight: '600',
+    webTimeInput: {
+        height: 40,
+        borderWidth: 1,
+        borderColor: '#ccc',
+        borderRadius: 8,
+        padding: 10,
+        fontSize: 16,
+        backgroundColor: '#f9f9f9',
+        color: '#333',
+        width: '100%',
     },
-    rowWrap: {
+    dateTimeContainer: {
         flexDirection: 'row',
+        justifyContent: 'space-between',
         flexWrap: 'wrap',
-        gap: 12,
-        alignItems: 'center',
-        marginTop: 5,
         marginBottom: 10,
     },
-
-    timeGroup: {
-        flexDirection: 'row',
+    dateTimeGroup: {
+        width: '48%',
+    },
+    datePickerButton: {
+        borderWidth: 1,
+        borderColor: '#ccc',
+        borderRadius: 8,
+        padding: 12,
+        backgroundColor: '#f9f9f9',
         alignItems: 'center',
     },
-
-    timeInput: {
-        width: 70,
+    datePickerButtonText: {
+        fontSize: 16,
+        color: '#333',
+    },
+    inlineInputs: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: 8,
+        marginBottom: 10,
+    },
+    smallInput: {
+        width: 60,
         borderWidth: 1,
-        borderColor: '#aaa',
+        borderColor: '#ccc',
         borderRadius: 8,
         padding: 8,
-        backgroundColor: '#fff',
+        backgroundColor: '#f9f9f9',
         textAlign: 'center',
-        marginRight: 6,
+        fontSize: 16,
+        color: '#333',
     },
+    unitText: {
+        fontSize: 16,
+        color: '#555',
+        marginRight: 10,
+    },
+    checkboxContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: 20,
+        marginBottom: 30,
+    },
+    checkbox: {
+        width: 24,
+        height: 24,
+        borderWidth: 2,
+        borderColor: '#4b0082',
+        borderRadius: 4,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 10,
+        backgroundColor: '#f9f9f9',
+    },
+    checkboxChecked: {
+        backgroundColor: '#4b0082',
+    },
+    checkboxCheckmark: {
+        color: '#fff',
+        fontSize: 16,
+        fontWeight: 'bold',
+    },
+    checkboxLabel: {
+        fontSize: 16,
+        color: '#333',
+    },
+    submitButton: {
+        backgroundColor: '#4b0082',
+        padding: 15,
+        borderRadius: 8,
+        alignItems: 'center',
+        marginTop: 20,
+    },
+    submitButtonText: {
+        color: '#fff',
+        fontSize: 18,
+        fontWeight: 'bold',
+    },
+});
 
-    timeLabel: {
-        fontWeight: '500',
+const pickerSelectStyles = StyleSheet.create({
+    inputIOS: {
+        fontSize: 16,
+        paddingVertical: 12,
+        paddingHorizontal: 10,
+        borderWidth: 1,
+        borderColor: '#ccc',
+        borderRadius: 8,
+        color: 'black',
+        paddingRight: 30,
+        backgroundColor: '#f9f9f9',
+        marginBottom: 10,
+    },
+    inputAndroid: {
+        fontSize: 16,
+        paddingHorizontal: 10,
+        paddingVertical: 8,
+        borderWidth: 1,
+        borderColor: '#ccc',
+        borderRadius: 8,
+        color: 'black',
+        paddingRight: 30,
+        backgroundColor: '#f9f9f9',
+        marginBottom: 10,
+    },
+    placeholder: {
+        color: '#999',
     },
 });
