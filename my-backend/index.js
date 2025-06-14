@@ -6,8 +6,6 @@ const path = require('path');
 
 dotenv.config();
 
-// Firebase Admin SDK init
-const serviceAccount = require('./firebase-service-account.json');
 
 admin.initializeApp({
   credential: admin.credential.cert({
