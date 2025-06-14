@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 
-const API_BASE = 'https://village-link.onrender.com'; // แก้เป็น backend จริงของคุณ
+const API_BASE = 'https://village-link.onrender.com';
 
 export default function ChatAdmin() {
     const [users, setUsers] = useState([]);
@@ -9,11 +9,17 @@ export default function ChatAdmin() {
     const [inputText, setInputText] = useState('');
     const messagesEndRef = useRef(null);
 
-    // โหลดรายชื่อ user
+    // โหลดรายชื่อ user พร้อม unread count
     useEffect(() => {
         fetch(`${API_BASE}/line-users`)
             .then(res => res.json())
-            .then(data => setUsers(data.users))
+            .then(data => {
+                setUsers(data.map(user => ({
+                    ...user,
+                    userId: user.id || user.userId,
+                    hasUnread: user.unreadCount > 0,
+                })));
+            })
             .catch(console.error);
     }, []);
 
@@ -26,10 +32,10 @@ export default function ChatAdmin() {
             .then(data => {
                 setMessages(data.messages);
 
-                // เรียก API ลบ unread flag หรือทำให้ข้อความอ่านแล้ว
-                fetch(`${API_BASE}/mark-read/${selectedUserId}`, { method: 'POST' }).catch(console.error);
+                // ทำให้ข้อความอ่านแล้ว
+                fetch(`${API_BASE}/mark-as-read/${selectedUserId}`, { method: 'POST' }).catch(console.error);
 
-                // อัปเดตรายชื่อ users ให้จุดแดงหาย (สมมุติ backend จะอัพเดต)
+                // อัปเดต users ให้จุดแดงหาย
                 setUsers(prevUsers => prevUsers.map(u =>
                     u.userId === selectedUserId ? { ...u, hasUnread: false } : u
                 ));
@@ -59,7 +65,6 @@ export default function ChatAdmin() {
             });
             if (!res.ok) throw new Error('Failed to send message');
 
-            // เพิ่มข้อความที่ส่งลงในแชทด้วย direction = out
             setMessages(prev => [...prev, {
                 direction: 'out',
                 message: inputText.trim(),
@@ -71,12 +76,18 @@ export default function ChatAdmin() {
         }
     }
 
-    // ฟังก์ชัน format เวลาแบบปลอดภัย กรณี timestamp เป็น null หรือไม่ใช่เลข
+    // ฟังก์ชันแสดงเวลา
     function formatTimestamp(ts) {
-        if (!ts) return ''; // หรือ return '-';
-        const d = new Date(ts);
-        if (isNaN(d.getTime())) return '';
-        return d.toLocaleString();
+        if (!ts) return '';
+        let date;
+        if (typeof ts === 'object' && ts.seconds) {
+            date = new Date(ts.seconds * 1000);
+        } else if (!isNaN(Number(ts))) {
+            date = new Date(Number(ts));
+        } else {
+            return '';
+        }
+        return date.toLocaleString('th-TH');
     }
 
     return (
@@ -101,8 +112,6 @@ export default function ChatAdmin() {
                             }}
                         >
                             <span>{user.label || user.userId}</span>
-
-                            {/* จุดแดงแจ้ง unread */}
                             {user.hasUnread && (
                                 <span
                                     style={{

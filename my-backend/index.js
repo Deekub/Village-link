@@ -215,23 +215,32 @@ cron.schedule('*/15 * * * *', async () => {
 
 app.get('/line-users', async (req, res) => {
   try {
-    const snapshot = await db.collection('lineUsers').get();
-    const users = [];
+    const usersSnapshot = await db.collection('lineUsers').get();
 
-    let count = 1;
-    snapshot.forEach(doc => {
-      users.push({
-        userId: doc.id,
-        label: `บุคคลที่ ${count++}`, // สร้างชื่อแทน
-      });
-    });
+    const users = await Promise.all(usersSnapshot.docs.map(async (doc) => {
+      const userId = doc.id;
 
-    res.json({ users });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to fetch users' });
+      // หาจำนวนข้อความ unread
+      const messagesSnapshot = await db.collection('lineUsers')
+        .doc(userId)
+        .collection('messages')
+        .where('unread', '==', true)
+        .get();
+
+      return {
+        id: userId,
+        ...doc.data(),
+        unreadCount: messagesSnapshot.size, // เพิ่ม field นี้!
+      };
+    }));
+
+    res.status(200).json(users);
+  } catch (error) {
+    console.error('Error fetching users with unread counts:', error);
+    res.status(500).json({ error: error.message });
   }
 });
+
 
 
 app.get('/messages/:userId', async (req, res) => {
