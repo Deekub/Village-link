@@ -1,5 +1,7 @@
 const express = require('express');
+const cors = require('cors'); // ✅ เพิ่ม cors
 const app = express();
+
 const bodyParser = require('body-parser');
 const admin = require('firebase-admin');
 const line = require('@line/bot-sdk');
@@ -8,6 +10,9 @@ const cron = require('node-cron');
 const { Timestamp } = require('firebase-admin/firestore');
 
 dotenv.config();
+
+app.use(cors()); // ✅ เพิ่ม middleware นี้
+app.use(bodyParser.json());
 
 // === Initialize Firebase Admin SDK ===
 admin.initializeApp({
