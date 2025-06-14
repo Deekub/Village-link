@@ -106,7 +106,7 @@ async function handleEvent(event) {
 
       return client.replyMessage(event.replyToken, {
         type: 'text',
-        text: 'ขอบคุณที่ติดตาม Line Bot ครับ!',
+        text: 'ขอบคุณที่ติดตาม Village Link ของเราครับ!',
       });
     } catch (error) {
       console.error('❌ Error saving new user:', error);
