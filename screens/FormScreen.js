@@ -168,7 +168,7 @@ export default function FormScreen() {
             const data = await response.json();
 
             if (response.ok) {
-                showAlert(`ส่งข่าวสารเรียบร้อย!\nLINE: ${data.lineSentCount} ข้อความ\nSMS: ${data.smsNumbersNotified} ข้อความ`);
+                showAlert(`ส่งข่าวสารเรียบร้อย!`);
                 // เคลียร์ฟอร์มเมื่อส่งสำเร็จ
                 setVillage('');
                 setTopic('');
