@@ -215,32 +215,38 @@ cron.schedule('*/15 * * * *', async () => {
 
 app.get('/line-users', async (req, res) => {
   try {
-    const usersSnapshot = await db.collection('lineUsers').get();
+    const snapshot = await db.collection('lineUsers').get();
+    const users = [];
 
-    const users = await Promise.all(usersSnapshot.docs.map(async (doc) => {
+    let count = 1;
+
+    for (const doc of snapshot.docs) {
       const userId = doc.id;
+      const label = `บุคคลที่ ${count++}`;
 
-      // หาจำนวนข้อความ unread
-      const messagesSnapshot = await db.collection('lineUsers')
+      // อ่าน subcollection messages
+      const messagesSnap = await db.collection('lineUsers')
         .doc(userId)
         .collection('messages')
+        .where('direction', '==', 'in')
         .where('unread', '==', true)
         .get();
 
-      return {
-        id: userId,
-        ...doc.data(),
-        unreadCount: messagesSnapshot.size, // เพิ่ม field นี้!
-      };
-    }));
+      const unreadCount = messagesSnap.size;
 
-    res.status(200).json(users);
-  } catch (error) {
-    console.error('Error fetching users with unread counts:', error);
-    res.status(500).json({ error: error.message });
+      users.push({
+        userId,
+        label,
+        unreadCount,
+      });
+    }
+
+    res.json(users); // ส่งเป็น array ตรง ๆ ไม่ต้อง { users } เพราะ frontend รอเป็น array แล้ว
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch users' });
   }
 });
-
 
 
 app.get('/messages/:userId', async (req, res) => {
