@@ -39,15 +39,17 @@ const client = new line.Client(config);
 console.log('🔐 LINE_CHANNEL_SECRET:', process.env.LINE_CHANNEL_SECRET);
 
 // === Thaibulksms API Config === <-- เพิ่มส่วนนี้
-const THAI_BULK_SMS_API_URL = 'https://api.thaibulksms.com/sms/v2/send';
+// URL จากเอกสาร API เวอร์ชัน 2.0 (หน้า 4 ของ PDF)
+const THAI_BULK_SMS_API_URL = 'https://api-v2.thaibulksms.com/sms';
 const THAI_BULK_SMS_API_KEY = process.env.THAI_BULK_SMS_API_KEY;
 const THAI_BULK_SMS_API_SECRET = process.env.THAI_BULK_SMS_API_SECRET;
 const THAI_BULK_SMS_SENDER_NAME = process.env.THAI_BULK_SMS_SENDER_NAME;
 
-// ตรวจสอบว่า API Keys ถูกตั้งค่าหรือไม่
+// ตรวจสอบว่า API Keys ถูกตั้งค่าหรือไม่ (แสดงคำเตือนแต่ไม่หยุดแอป)
 if (!THAI_BULK_SMS_API_KEY || !THAI_BULK_SMS_API_SECRET) {
-  console.error("🚨 THAI_BULK_SMS_API_KEY and THAI_BULK_SMS_API_SECRET are not set in .env");
-  // process.exit(1); // อาจจะหยุดแอปถ้าจำเป็นต้องใช้ SMS API เสมอ
+  console.warn("🚨 THAI_BULK_SMS_API_KEY and THAI_BULK_SMS_API_SECRET are not fully set in .env. SMS sending might be affected.");
+} else {
+  console.log("✅ Thaibulksms API credentials are set.");
 }
 
 // === Middleware ===
@@ -56,6 +58,9 @@ app.use(cors({
   methods: ['GET', 'POST'],
   allowedHeaders: ['Content-Type'],
 }));
+
+// ไม่ใช้ bodyParser.json() แบบ global
+// app.use(bodyParser.json());  <--- เอาออก
 
 // === Routes ===
 app.get('/', (req, res) => {
@@ -114,7 +119,7 @@ async function handleEvent(event) {
         direction: 'in', // ข้อความเข้ามา
         message: text,
         timestamp: admin.firestore.FieldValue.serverTimestamp(),
-        unread: true,  // <-- เพิ่มบรรทัดนี้
+        unread: true,
       });
   } else if (event.type === 'follow') {
     const userId = event.source.userId;
@@ -147,35 +152,51 @@ async function handleEvent(event) {
 // === ฟังก์ชันสำหรับส่ง SMS ผ่าน Thaibulksms API === <-- เพิ่มฟังก์ชันนี้
 async function sendSmsViaThaiBulkSms(phoneNumber, message) {
   if (!THAI_BULK_SMS_API_KEY || !THAI_BULK_SMS_API_SECRET) {
-    console.warn("⚠️ SMS API credentials not set. Skipping SMS send.");
+    console.warn("⚠️ SMS API credentials not fully set. Skipping SMS send for this call.");
     return { success: false, error: "SMS API credentials not set" };
   }
 
   try {
-    const response = await axios.post(THAI_BULK_SMS_API_URL, null, {
-      params: {
-        key: THAI_BULK_SMS_API_KEY,
-        secret: THAI_BULK_SMS_API_SECRET,
-        msisdn: phoneNumber,
-        message: message,
-        sender: THAI_BULK_SMS_SENDER_NAME,
-        // force: 'corporate', // ถ้าต้องการใช้ Corporate SMS ให้เปิดบรรทัดนี้
+    // สร้าง Basic Authorization header
+    const authHeader = 'Basic ' + Buffer.from(THAI_BULK_SMS_API_KEY + ':' + THAI_BULK_SMS_API_SECRET).toString('base64');
+
+    // สร้างข้อมูลที่จะส่งใน body ของ request ในรูปแบบ x-www-form-urlencoded
+    const requestBody = new URLSearchParams({
+      msisdn: phoneNumber,
+      message: message,
+      sender: THAI_BULK_SMS_SENDER_NAME,
+      // force: 'corporate', // ถ้าต้องการใช้ Corporate SMS ให้เปิดบรรทัดนี้
+    }).toString();
+
+    const response = await axios.post(THAI_BULK_SMS_API_URL, requestBody, {
+      headers: {
+        'Authorization': authHeader,
+        'Content-Type': 'application/x-www-form-urlencoded' // API v2.0 ใช้ Content-Type นี้
       }
     });
 
-    // Thaibulksms API มักจะตอบกลับเป็น JSON ที่มี status/code
-    if (response.data.status === 'success') {
+    // จากเอกสาร (หน้า 15) Response ของ API V2.0 จะมี remaining_credit, phone_number_list, bad_phone_number_list
+    // การส่งสำเร็จจะดูจาก bad_phone_number_list ที่ว่างเปล่า
+    if (response.data && response.data.bad_phone_number_list && response.data.bad_phone_number_list.length === 0) {
       console.log(`✅ SMS sent successfully to ${phoneNumber}:`, response.data);
       return { success: true, data: response.data };
     } else {
-      console.error(`❌ Failed to send SMS to ${phoneNumber}:`, response.data.status, response.data.message);
-      return { success: false, error: response.data.message || 'Unknown error', code: response.data.status };
+      // มีเบอร์ที่ไม่สามารถส่งได้ หรือมี error จาก API
+      const errorMessage = response.data.bad_phone_number_list && response.data.bad_phone_number_list.length > 0
+                           ? `Failed for some numbers: ${JSON.stringify(response.data.bad_phone_number_list)}`
+                           : 'Unknown error or empty bad_phone_number_list';
+      console.error(`❌ Failed to send SMS to ${phoneNumber}:`, errorMessage, response.data);
+      return { success: false, error: errorMessage, apiResponse: response.data };
     }
   } catch (error) {
     console.error(`❌ Error sending SMS to ${phoneNumber} via API:`, error.message);
     if (error.response) {
       console.error("  Response data:", error.response.data);
       console.error("  Response status:", error.response.status);
+      // ถ้าเป็น 401 หรือ 403 ให้ตรวจสอบ API Key/Secret หรือ IP Whitelist
+      if (error.response.status === 401 || error.response.status === 403) {
+          console.error("  Possible API Key/Secret issue or IP Whitelist not configured.");
+      }
     }
     return { success: false, error: error.message, apiResponse: error.response?.data };
   }
@@ -187,6 +208,11 @@ app.post('/send-sms', bodyParser.json(), async (req, res) => {
   const { phoneNumber, message } = req.body; // phoneNumber อาจเป็นเบอร์เดียวหรือ array ของเบอร์
   if (!phoneNumber || !message) {
     return res.status(400).json({ error: 'phoneNumber and message are required' });
+  }
+
+  // หากไม่ได้ตั้งค่า API Key/Secret ให้แจ้งเตือนทันที
+  if (!THAI_BULK_SMS_API_KEY || !THAI_BULK_SMS_API_SECRET) {
+      return res.status(503).json({ error: "SMS API credentials not fully set. Please configure .env file." });
   }
 
   const phoneNumbers = Array.isArray(phoneNumber) ? phoneNumber : [phoneNumber];
@@ -201,7 +227,10 @@ app.post('/send-sms', bodyParser.json(), async (req, res) => {
 });
 
 
-// === Cron Job: Run every 15 minutes ===
+// === Cron Job: Run every 15 minutes === <-- ปรับปรุงส่วนนี้
+// **ข้อควรระวัง: เมื่อรันใน Production ตรวจสอบให้แน่ใจว่า Cron job ถูกตั้งเวลาอย่างเหมาะสมและไม่ทำงานซ้ำซ้อน**
+// หากคุณตั้งใจให้ส่ง 4 ครั้ง/เดือน ควรปรับความถี่ของ Cron Job หรือ Logic การส่งให้เหมาะสม
+// เช่น ตรวจสอบว่าส่งในรอบที่กำหนดของเดือนแล้วหรือไม่
 cron.schedule('*/15 * * * *', async () => {
   console.log('🔄 Running scheduled broadcast task');
 
@@ -227,12 +256,16 @@ cron.schedule('*/15 * * * *', async () => {
       // แต่ยังสามารถส่ง SMS ได้แม้ไม่มี LINE user
     }
 
-    // ดึงรายชื่อเบอร์โทรศัพท์สำหรับ SMS
+    // ดึงรายชื่อเบอร์โทรศัพท์สำหรับ SMS จาก Collection 'smsRecipients'
     // สมมติว่ามี collection ชื่อ 'smsRecipients' ที่เก็บเบอร์โทรศัพท์
     const smsRecipientsSnapshot = await db.collection('smsRecipients').get(); // <-- ต้องมี collection นี้
-    const smsPhoneNumbers = smsRecipientsSnapshot.docs.map(doc => doc.data().phoneNumber); // สมมติว่า field ชื่อ phoneNumber
-    if (smsRecipientsSnapshot.empty) {
-      console.warn('⚠️ No SMS recipients found for SMS broadcast.');
+    const smsPhoneNumbers = smsRecipientsSnapshot.docs
+      .map(doc => doc.data().phoneNumber)
+      .filter(num => typeof num === 'string' && num.length > 0); // กรองเฉพาะเบอร์ที่ถูกต้องและไม่ว่างเปล่า
+    if (smsRecipientsSnapshot.empty || smsPhoneNumbers.length === 0) {
+      console.warn('⚠️ No valid SMS recipients found in "smsRecipients" collection for SMS broadcast.');
+    } else {
+      console.log(`Found ${smsPhoneNumbers.length} SMS recipients.`);
     }
 
 
@@ -240,18 +273,59 @@ cron.schedule('*/15 * * * *', async () => {
       const data = doc.data();
 
       // ข้อความ LINE (แบบเต็ม)
-      const lineMessage = `📢 แจ้งข่าวจาก ${data.village}
-หัวข้อ: ${data.topic}
-การจัดการ: ${data.action}
-รายละเอียด: ${data.detail}
-เวลา: ${data.notifyTime.toDate().toLocaleString()}
-เวลาจัดการโดยประมาณ: ${data.fixTime}`;
+      // ตรวจสอบว่า data.village, data.topic, etc. มีข้อมูลหรือไม่ก่อนนำมาใช้
+      const lineMessage = `📢 แจ้งข่าวจาก ${data.village || 'หมู่บ้าน'}
+หัวข้อ: ${data.topic || 'ไม่ระบุ'}
+การจัดการ: ${data.action || 'ไม่ระบุ'}
+รายละเอียด: ${data.detail || 'ไม่มีรายละเอียด'}
+เวลา: ${data.notifyTime ? data.notifyTime.toDate().toLocaleString('th-TH', {hour12: false}) : 'ไม่ระบุ'}
+เวลาจัดการโดยประมาณ: ${data.fixTime || 'ไม่ระบุ'}`;
+
 
       // ข้อความ SMS (แบบกระชับ 65 ตัวอักษร)
-      const smsMessage = `แจ้ง: หมู่ 1 ไฟฟ้าตัดไฟซ่อมสาย ${data.notifyTime.toDate().toLocaleDateString('th-TH', {day: '2-digit', month: '2-digit', year: '2-digit'}).replace(/\//g, '/')} ${data.notifyTime.toDate().toLocaleTimeString('th-TH', {hour: '2-digit', minute: '2-digit', hour12: false})}-${new Date(data.notifyTime.toDate().getTime() + (data.fixTimeValue || 0) * 60 * 1000).toLocaleTimeString('th-TH', {hour: '2-digit', minute: '2-digit', hour12: false})}น. 30 นาที`;
-      // หมายเหตุ: data.fixTimeValue ควรเป็นจำนวนนาที เช่น 30 ถ้า data.fixTime เป็น "30 นาที"
-      // ต้องมั่นใจว่า notifyTime และ fixTimeValue ถูกเก็บใน Firebase ในรูปแบบที่ถูกต้อง
-      // หรือปรับวิธีการสร้าง smsMessage ให้ตรงกับโครงสร้างข้อมูลจริงใน news collection
+      // สร้างรูปแบบ "แจ้ง: หมู่ 1 ไฟฟ้าตัดไฟซ่อมสาย 14/6/25 16:05-16:35น. 30 นาที"
+      let smsDateTimePart = 'ไม่ระบุเวลา';
+      if (data.notifyTime && data.fixTime) {
+          try {
+              // คำนวณ durationMinutes จาก data.fixTime เช่น "30 นาที" หรือ "1 ชั่วโมง 15 นาที"
+              let durationMinutes = 0;
+              const matchMinutes = data.fixTime.match(/(\d+)\s*นาที/);
+              const matchHours = data.fixTime.match(/(\d+)\s*ชั่วโมง/);
+              if (matchMinutes) durationMinutes += parseInt(matchMinutes[1], 10);
+              if (matchHours) durationMinutes += parseInt(matchHours[1], 10) * 60;
+
+              const startTime = data.notifyTime.toDate();
+              const endTime = new Date(startTime.getTime() + durationMinutes * 60 * 1000);
+
+              const formattedDate = startTime.toLocaleDateString('th-TH', {day: '2-digit', month: '2-digit', year: '2-digit'}); // เช่น "14/06/68"
+              const formattedStartTime = startTime.toLocaleTimeString('th-TH', {hour: '2-digit', minute: '2-digit', hour12: false}); // เช่น "16:05"
+              const formattedEndTime = endTime.toLocaleTimeString('th-TH', {hour: '2-digit', minute: '2-digit', hour12: false}); // เช่น "16:35"
+
+              // สร้างส่วนของเวลา "14/6/25 16:05-16:35น. 30 นาที"
+              smsDateTimePart = `${formattedDate.replace(/(\d{2})\/(\d{2})\/(\d{2})/, '$1/$2/$3')} ${formattedStartTime}–${formattedEndTime}น. ${durationMinutes} นาที`;
+              // ตัวอย่าง: "14/06/68 16:05–16:35น. 30 นาที" (ตรวจสอบความยาวอีกครั้ง)
+
+              // ลองย่อปีให้เป็น 25 แทน 68 ถ้า toLocaleDateString ให้มาเป็น 68
+              smsDateTimePart = smsDateTimePart.replace(/(\d{2})\/(\d{2})\/(\d{4})/, (match, d, m, y) => {
+                  const shortYear = y.substring(2);
+                  return `${d}/${m}/${shortYear}`;
+              });
+
+
+          } catch (e) {
+              console.warn("Could not parse notifyTime or fixTime for SMS message. Using default.", e);
+              smsDateTimePart = `วันที่ ${data.notifyTime ? data.notifyTime.toDate().toLocaleDateString('th-TH', {day: '2-digit', month: '2-digit', year: '2-digit'}) : 'ไม่ระบุ'}`;
+          }
+      }
+      const smsMessage = `แจ้ง: หมู่ 1 ไฟฟ้าตัดไฟซ่อมสาย ${smsDateTimePart}`;
+
+      // ตรวจสอบความยาว SMS ก่อนส่ง
+      if (smsMessage.length > 70) {
+          console.warn(`⚠️ SMS message is too long (${smsMessage.length} chars) for 1 segment. Please shorten it: "${smsMessage}"`);
+          // คุณอาจจะเพิ่ม logic ตรงนี้เพื่อไม่ให้ส่ง SMS ถ้าเกิน 70 ตัวอักษร
+          // หรือทำการตัดข้อความโดยอัตโนมัติ (แต่ต้องระวังความหมายจะเปลี่ยนไป)
+      }
+
 
       // --- ส่งผ่าน LINE ---
       if (lineUserIds.length > 0) {
@@ -267,22 +341,27 @@ cron.schedule('*/15 * * * *', async () => {
       }
 
       // --- ส่งผ่าน SMS ---
-      if (smsPhoneNumbers.length > 0) {
+      // ส่ง SMS ก็ต่อเมื่อมีผู้รับและมีการตั้งค่า API Key/Secret ครบถ้วน
+      if (smsPhoneNumbers.length > 0 && THAI_BULK_SMS_API_KEY && THAI_BULK_SMS_API_SECRET) {
         const smsSendPromises = [];
-        // Loop ส่ง SMS ทีละเบอร์ (หรือตามความสามารถของ API Batching)
+        // Loop ส่ง SMS ทีละเบอร์ (Thaibulksms API ส่งได้ทีละเบอร์ในคำขอเดียว หรือหลายเบอร์คั่นด้วย ,)
+        // สำหรับ axios.post แบบ x-www-form-urlencoded ต้องวนส่งทีละเบอร์
         for (const phoneNumber of smsPhoneNumbers) {
           smsSendPromises.push(sendSmsViaThaiBulkSms(phoneNumber, smsMessage));
         }
         await Promise.all(smsSendPromises);
         console.log(`📱 ส่ง SMS ให้ผู้ใช้ ${smsPhoneNumbers.length} คน`);
+      } else if (smsPhoneNumbers.length > 0) {
+         console.warn("⚠️ SMS recipients found, but SMS API credentials are not fully set. Skipping SMS broadcast.");
       }
 
+
       // คำนวณเวลารอบถัดไป (ถ้ามี repeatCount)
-      // frequency ควรเป็นรูปแบบ "ทุก X ชั่วโมง Y นาที"
-      const freqMatch = data.frequency.match(/(\d+)/g);
-      if (freqMatch && freqMatch.length >= 2) {
-        const h = parseInt(freqMatch[0], 10);
-        const m = parseInt(freqMatch[1], 10);
+      // frequency ควรเป็นรูปแบบ "ทุก X ชั่วโมง Y นาที" (e.g., "ทุก 1 ชั่วโมง 0 นาที")
+      const freqMatch = data.frequency ? data.frequency.match(/(\d+)\s*ชั่วโมง\s*(\d+)\s*นาที/) : null;
+      if (freqMatch && freqMatch.length >= 3) {
+        const h = parseInt(freqMatch[1], 10);
+        const m = parseInt(freqMatch[2], 10);
         const nextTime = data.notifyTime.toDate();
         nextTime.setHours(nextTime.getHours() + h);
         nextTime.setMinutes(nextTime.getMinutes() + m);
@@ -300,7 +379,7 @@ cron.schedule('*/15 * * * *', async () => {
       } else {
         // frequency ไม่ถูกต้องหรือไม่มี
         await doc.ref.update({ sent: true });
-        console.log(`❌ frequency ไม่ถูกต้อง ปิดการส่ง`);
+        console.log(`❌ frequency ไม่ถูกต้อง หรือไม่มีรูปแบบ "ชั่วโมง นาที" ปิดการส่ง`);
       }
     }
   } catch (err) {
@@ -337,7 +416,7 @@ app.get('/line-users', async (req, res) => {
       });
     }
 
-    res.json(users); // ส่งเป็น array ตรง ๆ ไม่ต้อง { users } เพราะ frontend รอเป็น array แล้ว
+    res.json(users);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch users' });
