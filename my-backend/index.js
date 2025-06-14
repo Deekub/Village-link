@@ -183,7 +183,7 @@ async function sendSmsViaThaiBulkSms(phoneNumber, message) {
     // การส่งสำเร็จจะดูจาก bad_phone_number_list ที่ว่างเปล่า
     if (response.data && response.data.bad_phone_number_list && response.data.bad_phone_number_list.length === 0) {
       console.log(`✅ SMS sent successfully to ${phoneNumber}:`, response.data);
-      return { success: true, data: response.data };
+      return { success: true, data: response.data }; 
     } else {
       // มีเบอร์ที่ไม่สามารถส่งได้ หรือมี error จาก API
       const errorMessage = response.data.bad_phone_number_list && response.data.bad_phone_number_list.length > 0
