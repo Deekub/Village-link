@@ -104,10 +104,10 @@ async function handleEvent(event) {
       });
 
     // ตัวอย่างตอบกลับอัตโนมัติ (optional)
-    return client.replyMessage(event.replyToken, {
-      type: 'text',
-      text: `เราได้รับข้อความ: ${text}`,
-    });
+    // return client.replyMessage(event.replyToken, {
+    //   type: 'text',
+    //   text: `เราได้รับข้อความ: ${text}`,
+    // });
   } else if (event.type === 'follow') {
     const userId = event.source.userId;
 
