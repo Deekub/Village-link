@@ -166,7 +166,7 @@ async function sendSmsViaThaiBulkSms(phoneNumber, message) {
     const requestBody = new URLSearchParams({
       msisdn: phoneNumber,
       message: message,
-      sender: 'VillageLinks',
+      sender: THAI_BULK_SMS_SENDER_NAME,
       // force: 'corporate', // ถ้าต้องการใช้ Corporate SMS ให้เปิดบรรทัดนี้
     }).toString();
 
