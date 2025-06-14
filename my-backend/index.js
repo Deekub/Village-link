@@ -38,7 +38,11 @@ const client = new line.Client(config);
 console.log('🔐 LINE_CHANNEL_SECRET:', process.env.LINE_CHANNEL_SECRET);
 
 // === Middleware ===
-app.use(cors());
+app.use(cors({
+  origin: ['http://localhost:8081'], // หรือใส่ array หลาย origin ได้
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['Content-Type'],
+}));
 
 // ไม่ใช้ bodyParser.json() แบบ global
 // app.use(bodyParser.json());  <--- เอาออก
