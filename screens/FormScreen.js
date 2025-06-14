@@ -78,8 +78,20 @@ export default function FormScreen() {
                 sent: false,
             });
 
+            // 🔥 เรียก API ไปหลังบ้าน (สมมุติว่า POST พร้อม body)
+            await fetch('https://your-backend.onrender.com/api/send-line', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    message: `📢 แจ้งข่าวจาก${village}\nหัวข้อ: ${topic}\nการจัดการ: ${action}\nรายละเอียด: ${detail}\nเวลา: ${combinedDateTime.toLocaleString()}`,
+                }),
+            });
+
             Alert.alert('บันทึกข้อมูลเรียบร้อย');
 
+            // Reset ฟอร์ม
             setVillage('');
             setTopic('');
             setAction('');
@@ -93,6 +105,7 @@ export default function FormScreen() {
             console.error(err);
             Alert.alert('เกิดข้อผิดพลาด');
         }
+
     };
 
     return (
