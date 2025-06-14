@@ -35,6 +35,9 @@ const config = {
 };
 const client = new line.Client(config);
 
+console.log('🔐 LINE_CHANNEL_SECRET:', process.env.LINE_CHANNEL_SECRET);
+
+
 // === Middleware ===
 app.use(cors());
 app.use(bodyParser.json());
