@@ -12,11 +12,8 @@ const firebaseConfig = {
   measurementId: "G-P3WF4HJPW8"
 };
 
+
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
-
-
-connectFirestoreEmulator(db, 'localhost', 8080);
-
 
 export { db };

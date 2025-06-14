@@ -31,6 +31,7 @@ const actions = [
     { label: 'อื่นๆ', value: 'อื่นๆ' },
 ];
 
+// ฟังก์ชันรวมวันที่และเวลา
 function combineDateAndTime(date, time) {
     const combined = new Date(date);
     combined.setHours(time.getHours());
@@ -39,6 +40,31 @@ function combineDateAndTime(date, time) {
     combined.setMilliseconds(time.getMilliseconds());
     return combined;
 }
+
+// ฟังก์ชัน alert แยกเว็บกับแอพมือถือ
+const showAlert = (message) => {
+    if (Platform.OS === 'web') {
+        window.alert(message);
+    } else {
+        Alert.alert(message);
+    }
+};
+
+// แปลงวันที่เป็น วว/ดด/ปปปป
+const formatDate = (date) => {
+    const dd = String(date.getDate()).padStart(2, '0');
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const yyyy = date.getFullYear();
+    return `${dd}/${mm}/${yyyy}`;
+};
+
+// แปลงเวลาเป็น hh:mm (24 ชั่วโมง)
+const formatTime24 = (date) => {
+    const hh = String(date.getHours()).padStart(2, '0');
+    const min = String(date.getMinutes()).padStart(2, '0');
+    return `${hh}:${min}`;
+};
+
 
 export default function FormScreen() {
     const [village, setVillage] = useState('');
@@ -57,7 +83,7 @@ export default function FormScreen() {
 
     const handleSubmit = async () => {
         if (!village || !topic || !action || !detail || !repeatCount) {
-            Alert.alert('กรุณากรอกข้อมูลให้ครบถ้วน');
+            showAlert('กรุณากรอกข้อมูลให้ครบถ้วน');
             return;
         }
 
@@ -65,21 +91,50 @@ export default function FormScreen() {
         const fm = parseInt(frequencyMinute) || 0;
         const rc = parseInt(repeatCount);
 
-        // validation ความถี่และจำนวนครั้ง
         if (fh === 0 && fm === 0) {
-            // frequency = 0 หมายถึงส่งครั้งเดียวเท่านั้น
-            if (rc > 1) {
-                Alert.alert('กรุณาระบุความถี่อย่างน้อย 15 นาที หากต้องการส่งหลายครั้ง');
-                return;
-            }
+            // อนุญาตถ้า repeatCount มากกว่า 1 ให้ส่งได้
         } else if (fh === 0 && fm > 0 && fm < 15) {
-            Alert.alert('กรุณาระบุความถี่อย่างน้อย 15 นาที');
+            showAlert('กรุณาระบุความถี่อย่างน้อย 15 นาที');
             return;
         }
 
         const combinedDateTime = combineDateAndTime(notifyDate, notifyTime);
+        const finishRepairTime = new Date(
+            combinedDateTime.getTime() + (parseInt(fixHour) * 60 + parseInt(fixMinute)) * 60 * 1000
+        );
+
+        // แปลงวันที่และเวลาให้ตรงตามที่ขอ
+        const notifyDateFormatted = formatDate(combinedDateTime);
+        const notifyTimeFormatted = formatTime24(combinedDateTime);
+        const finishRepairTimeFormatted = formatTime24(finishRepairTime);
+
         const frequencyText = `ทุก ${fh} ชั่วโมง ${fm} นาที`;
-        const fixTimeText = `${fixHour} ชั่วโมง ${fixMinute} นาที`;
+
+
+        const fixtimereturn = ({ fixHour }, { fixMinute }) => {
+            const hour = parseInt(fixHour)
+            const min = parseInt(fixMinute);
+            if (hour == 0) {
+                console.log("No hour");
+                return `${fixMinute} นาที`;
+            } else {
+                console.log("have hour", hour);
+                return `${fixHour} ชั่วโมง ${fixMinute} นาที`;
+            }
+        };
+
+        const fixTimeText = fixtimereturn({ fixHour }, { fixMinute });
+
+        console.log("fixtime text :", fixTimeText)
+
+        const messageText = `📢 แจ้งข่าวบริเวณ ${village} 📢
+🏷️หัวข้อ: ${topic}
+⚙️การจัดการ: ${action}
+📝รายละเอียด: ${detail}
+📅 ณ วันที่: ${notifyDateFormatted}
+⏰เวลา: ${notifyTimeFormatted} น.
+⏰ใช้เวลา : ${fixTimeText}
+📅เวลาเสร็จสิ้นประมาณ: ${finishRepairTimeFormatted} น.`;
 
         try {
             await addDoc(collection(db, 'news'), {
@@ -99,12 +154,13 @@ export default function FormScreen() {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    message: `📢 แจ้งข่าวจาก${village}\nหัวข้อ: ${topic}\nการจัดการ: ${action}\nรายละเอียด: ${detail}\nเวลา: ${combinedDateTime.toLocaleString()}\nเวลาจัดการโดยประมาณ: ${fixTimeText}`,
+                    message: messageText,
                 }),
             });
 
-            Alert.alert('บันทึกข้อมูลเรียบร้อย');
+            showAlert('บันทึกข้อมูลเรียบร้อย');
 
+            // เคลียร์ฟอร์ม
             setVillage('');
             setTopic('');
             setAction('');
@@ -118,7 +174,7 @@ export default function FormScreen() {
             setNotifyTime(new Date());
         } catch (err) {
             console.error(err);
-            Alert.alert('เกิดข้อผิดพลาด');
+            showAlert('เกิดข้อผิดพลาด');
         }
     };
 
@@ -159,23 +215,27 @@ export default function FormScreen() {
                 />
 
                 <Text style={styles.label}>เวลาจัดการโดยประมาณ</Text>
-                <View style={{ flexDirection: 'row', gap: 10 }}>
-                    <TextInput
-                        style={styles.input}
-                        value={fixHour}
-                        onChangeText={setFixHour}
-                        keyboardType="numeric"
-                        placeholder="เช่น 1, 2, 3"
-                    />
-                    <Text style={styles.label}>ชั่วโมง</Text>
-                    <TextInput
-                        style={styles.input}
-                        value={fixMinute}
-                        onChangeText={setFixMinute}
-                        keyboardType="numeric"
-                        placeholder="เช่น 1, 2, 3"
-                    />
-                    <Text style={styles.label}>นาที</Text>
+                <View style={styles.rowWrap}>
+                    <View style={styles.timeGroup}>
+                        <TextInput
+                            style={styles.timeInput}
+                            value={fixHour}
+                            onChangeText={setFixHour}
+                            keyboardType="numeric"
+                            placeholder="ชั่วโมง"
+                        />
+                        <Text style={styles.timeLabel}>ชั่วโมง</Text>
+                    </View>
+                    <View style={styles.timeGroup}>
+                        <TextInput
+                            style={styles.timeInput}
+                            value={fixMinute}
+                            onChangeText={setFixMinute}
+                            keyboardType="numeric"
+                            placeholder="นาที"
+                        />
+                        <Text style={styles.timeLabel}>นาที</Text>
+                    </View>
                 </View>
 
                 <Text style={styles.label}>เลือกวันที่แจ้ง</Text>
@@ -243,24 +303,28 @@ export default function FormScreen() {
                     placeholder="เช่น 1, 2, 3"
                 />
 
-                <Text style={styles.label}>ความถี่ในการแจ้งเตือน</Text>
-                <View style={{ flexDirection: 'row', gap: 10 }}>
-                    <TextInput
-                        style={styles.input}
-                        value={frequencyHour}
-                        onChangeText={setFrequencyHour}
-                        keyboardType="numeric"
-                        placeholder="เช่น 1, 2, 3"
-                    />
-                    <Text style={styles.label}>ชั่วโมง</Text>
-                    <TextInput
-                        style={styles.input}
-                        value={frequencyMinute}
-                        onChangeText={setFrequencyMinute}
-                        keyboardType="numeric"
-                        placeholder="เช่น 1, 2, 3"
-                    />
-                    <Text style={styles.label}>นาที</Text>
+                <Text style={styles.label}>ความถี่ในการแจ้งเตือน (เลือกได้)</Text>
+                <View style={styles.rowWrap}>
+                    <View style={styles.timeGroup}>
+                        <TextInput
+                            style={styles.timeInput}
+                            value={frequencyHour}
+                            onChangeText={setFrequencyHour}
+                            keyboardType="numeric"
+                            placeholder="ชั่วโมง"
+                        />
+                        <Text style={styles.timeLabel}>ชั่วโมง</Text>
+                    </View>
+                    <View style={styles.timeGroup}>
+                        <TextInput
+                            style={styles.timeInput}
+                            value={frequencyMinute}
+                            onChangeText={setFrequencyMinute}
+                            keyboardType="numeric"
+                            placeholder="นาที"
+                        />
+                        <Text style={styles.timeLabel}>นาที (ขั้นต่ำ 15 นาที)</Text>
+                    </View>
                 </View>
                 <View style={{ marginTop: 20 }}>
                     <Button title="ส่งข่าว" onPress={handleSubmit} />
@@ -288,5 +352,38 @@ const styles = StyleSheet.create({
         borderRadius: 8,
         width: '100%',
         marginBottom: 15,
+    },
+    subLabel: {
+        marginTop: 10,
+        marginBottom: 5,
+        fontWeight: '600',
+    },
+    rowWrap: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 12,
+        alignItems: 'center',
+        marginTop: 5,
+        marginBottom: 10,
+    },
+
+    timeGroup: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+
+    timeInput: {
+        width: 70,
+        borderWidth: 1,
+        borderColor: '#aaa',
+        borderRadius: 8,
+        padding: 8,
+        backgroundColor: '#fff',
+        textAlign: 'center',
+        marginRight: 6,
+    },
+
+    timeLabel: {
+        fontWeight: '500',
     },
 });

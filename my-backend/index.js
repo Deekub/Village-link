@@ -44,6 +44,35 @@ app.get('/', (req, res) => {
   res.send('👋 Hello from Node.js + Firebase + LINE API Server!');
 });
 
+async function handleEvent(event) {
+  if (event.type === 'follow') {
+    const userId = event.source.userId;
+
+    try {
+      const userRef = db.collection('lineUsers').doc(userId);
+      const userDoc = await userRef.get();
+
+      if (!userDoc.exists) {
+        await userRef.set({
+          followedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        console.log(`✅ บันทึกผู้ใช้ใหม่: ${userId}`);
+      }
+
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: 'ขอบคุณที่ติดตาม Line Bot ครับ!',
+      });
+    } catch (error) {
+      console.error('❌ Error saving new user:', error);
+    }
+  }
+
+  // ไม่ใช่ event ที่เราสนใจ
+  return Promise.resolve(null);
+}
+
+
 // API สำหรับ frontend เรียกส่งข้อความ LINE ทันที
 app.post('/notify', async (req, res) => {
   const { message } = req.body;
@@ -73,6 +102,17 @@ app.post('/notify', async (req, res) => {
     res.status(500).json({ error: 'Failed to send messages' });
   }
 });
+
+app.post('/webhook', line.middleware(config), async (req, res) => {
+  Promise
+    .all(req.body.events.map(handleEvent))
+    .then(result => res.json(result))
+    .catch(err => {
+      console.error(err);
+      res.status(500).end();
+    });
+});
+
 
 // === Cron Job: Run every 15 minutes ===
 cron.schedule('*/15 * * * *', async () => {
