@@ -79,7 +79,8 @@ app.post('/notify', async (req, res) => {
 
   try {
     // ดึง userId ทั้งหมดจาก Firestore (collection 'lineuser' หรือ 'users')
-    const usersSnapshot = await db.collection('lineuser').get();
+    const usersSnapshot = await db.collection('lineUsers').get();
+    console.log("User list: ",usersSnapshot)
 
     if (usersSnapshot.empty) {
       return res.status(404).json({ success: false, error: 'No users found' });
