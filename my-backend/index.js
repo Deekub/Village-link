@@ -37,47 +37,19 @@ const client = new line.Client(config);
 
 console.log('🔐 LINE_CHANNEL_SECRET:', process.env.LINE_CHANNEL_SECRET);
 
-
 // === Middleware ===
 app.use(cors());
-app.use(bodyParser.json());
+
+// ไม่ใช้ bodyParser.json() แบบ global
+// app.use(bodyParser.json());  <--- เอาออก
 
 // === Routes ===
 app.get('/', (req, res) => {
   res.send('👋 Hello from Node.js + Firebase + LINE API Server!');
 });
 
-async function handleEvent(event) {
-  if (event.type === 'follow') {
-    const userId = event.source.userId;
-
-    try {
-      const userRef = db.collection('lineUsers').doc(userId);
-      const userDoc = await userRef.get();
-
-      if (!userDoc.exists) {
-        await userRef.set({
-          followedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-        console.log(`✅ บันทึกผู้ใช้ใหม่: ${userId}`);
-      }
-
-      return client.replyMessage(event.replyToken, {
-        type: 'text',
-        text: 'ขอบคุณที่ติดตาม Line Bot ครับ!',
-      });
-    } catch (error) {
-      console.error('❌ Error saving new user:', error);
-    }
-  }
-
-  // ไม่ใช่ event ที่เราสนใจ
-  return Promise.resolve(null);
-}
-
-
-// API สำหรับ frontend เรียกส่งข้อความ LINE ทันที
-app.post('/notify', async (req, res) => {
+// สำหรับ /notify route ใช้ bodyParser.json() แยกเฉพาะ route นี้
+app.post('/notify', bodyParser.json(), async (req, res) => {
   const { message } = req.body;
   if (!message) {
     return res.status(400).json({ error: 'Message is required' });
@@ -106,16 +78,46 @@ app.post('/notify', async (req, res) => {
   }
 });
 
+// webhook route: line.middleware(config) ต้องอยู่ก่อนเสมอ
 app.post('/webhook', line.middleware(config), async (req, res) => {
-  Promise
-    .all(req.body.events.map(handleEvent))
-    .then(result => res.json(result))
-    .catch(err => {
-      console.error(err);
-      res.status(500).end();
-    });
+  try {
+    await Promise.all(req.body.events.map(handleEvent));
+    res.status(200).send('OK');
+  } catch (err) {
+    console.error(err);
+    res.status(500).end();
+  }
 });
 
+async function handleEvent(event) {
+  if (event.type === 'follow') {
+    const userId = event.source.userId;
+
+    try {
+      const userRef = db.collection('lineUsers').doc(userId);
+      const userDoc = await userRef.get();
+
+      if (!userDoc.exists) {
+        await userRef.set({
+          followedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        console.log(`✅ บันทึกผู้ใช้ใหม่: ${userId}`);
+      }
+
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: 'ขอบคุณที่ติดตาม Line Bot ครับ!',
+      });
+    } catch (error) {
+      console.error('❌ Error saving new user:', error);
+      // ตอบกลับ error message ก็ได้ หรือ return null ก็ได้
+      return null;
+    }
+  }
+
+  // กรณี event อื่นๆ ไม่ได้สนใจ
+  return Promise.resolve(null);
+}
 
 // === Cron Job: Run every 15 minutes ===
 cron.schedule('*/15 * * * *', async () => {
