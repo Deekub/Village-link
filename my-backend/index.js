@@ -38,11 +38,7 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'web-build')));
 
 // For any other route, serve the React app index.html
-app.get('*', (req, res, next) => {
-  // ถ้า path เริ่มด้วย /api หรือ /webhook ให้ข้ามไปเลย (ไม่ส่ง index.html)
-  if (req.path.startsWith('/api') || req.path === '/webhook' || req.path === '/notify') {
-    return next();
-  }
+app.get(/^\/(?!api|webhook|notify).*/, (req, res) => {
   res.sendFile(path.join(__dirname, 'web-build', 'index.html'));
 });
 
