@@ -1,11 +1,15 @@
 const express = require('express');
-const cors = require('cors'); // เพิ่ม cors
-const { Client, middleware } = require('@line/bot-sdk');
+const app = express();
+const bodyParser = require('body-parser');
 const admin = require('firebase-admin');
+const line = require('@line/bot-sdk');
 const dotenv = require('dotenv');
+const cron = require('node-cron');
+const { Timestamp } = require('firebase-admin/firestore');
 
 dotenv.config();
 
+// === Initialize Firebase Admin SDK ===
 admin.initializeApp({
   credential: admin.credential.cert({
     type: process.env.FB_TYPE,
@@ -23,94 +27,92 @@ admin.initializeApp({
 
 const db = admin.firestore();
 
+// === LINE Bot Config ===
 const config = {
-  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
-  channelSecret: process.env.LINE_CHANNEL_SECRET,
+    channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
+    channelSecret: process.env.LINE_CHANNEL_SECRET,
 };
+const client = new line.Client(config);
 
-const client = new Client(config);
-const app = express();
+// === Middleware ===
+app.use(bodyParser.json());
 
-app.use(cors({
-  origin: 'http://localhost:8081', // หรือใช้ '*' ถ้าจะเปิดทุก origin
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-}));
-
-app.use(express.json());
-
-// **ตัดการ serve static และ route index.html ออกทั้งหมด**
-
-app.post('/webhook', middleware(config), async (req, res) => {
-  const events = req.body.events;
-  try {
-    await Promise.all(events.map(handleEvent));
-    res.status(200).send('OK');
-  } catch (err) {
-    console.error(err);
-    res.status(500).end();
-  }
+// === Routes ===
+app.get('/', (req, res) => {
+    res.send('👋 Hello from Node.js + Firebase + LINE API Server!');
 });
 
-async function handleEvent(event) {
-  if (event.type === 'message' && event.message.type === 'text') {
-    const userId = event.source.userId;
-    const messageText = event.message.text;
+// === Cron Job: Run every 15 minutes ===
+cron.schedule('*/15 * * * *', async () => {
+    console.log('🔄 Running scheduled broadcast task');
 
-    console.log('userId:', userId);
-    console.log('message:', messageText);
+    try {
+        const now = new Date();
 
-    const userRef = db.collection('users').doc(userId);
-    await userRef.set(
-      {
-        lastMessage: messageText,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
+        // Get news that need to be sent
+        const newsSnapshot = await db.collection('news')
+            .where('sent', '==', false)
+            .where('notifyTime', '<=', Timestamp.fromDate(now))
+            .get();
 
-    return client.replyMessage(event.replyToken, {
-      type: 'text',
-      text: 'ขอบคุณสำหรับข้อความครับ!',
-    });
-  }
-  return Promise.resolve(null);
-}
+        if (newsSnapshot.empty) {
+            console.log('✅ No news to broadcast.');
+            return;
+        }
 
-app.post('/notify', async (req, res) => {
-  const { message } = req.body;
+        // Get LINE users
+        const usersSnapshot = await db.collection('lineUsers').get();
+        if (usersSnapshot.empty) {
+            console.warn('⚠️ No LINE users found.');
+            return;
+        }
 
-  if (!message) {
-    return res.status(400).json({ success: false, error: 'Missing message' });
-  }
+        newsSnapshot.forEach(async (doc) => {
+            const data = doc.data();
 
-  try {
-    const usersSnapshot = await db.collection('lineUsers').get();
-    console.log("User list: ", usersSnapshot);
+            const message = `📢 แจ้งข่าวจาก ${data.village}
+หัวข้อ: ${data.topic}
+การจัดการ: ${data.action}
+รายละเอียด: ${data.detail}
+เวลา: ${data.notifyTime.toDate().toLocaleString()}
+เวลาจัดการโดยประมาณ: ${data.fixTime}`;
 
-    if (usersSnapshot.empty) {
-      return res.status(404).json({ success: false, error: 'No users found' });
+            const pushPromises = [];
+            usersSnapshot.forEach(userDoc => {
+                const userId = userDoc.id;
+                pushPromises.push(client.pushMessage(userId, {
+                    type: 'text',
+                    text: message,
+                }));
+            });
+
+            await Promise.all(pushPromises);
+            console.log(`📬 ส่งข่าวให้ผู้ใช้ ${usersSnapshot.size} คน`);
+
+            // คำนวณรอบถัดไป (ถ้ามี repeatCount)
+            const [h, m] = data.frequency.match(/\d+/g).map(Number);
+            const nextTime = new Date();
+            nextTime.setHours(nextTime.getHours() + h);
+            nextTime.setMinutes(nextTime.getMinutes() + m);
+
+            if (data.repeatCount > 1) {
+                await doc.ref.update({
+                    notifyTime: Timestamp.fromDate(nextTime),
+                    repeatCount: data.repeatCount - 1,
+                });
+                console.log(`🔁 เตรียมรอบถัดไปอีก ${data.repeatCount - 1} ครั้ง`);
+            } else {
+                await doc.ref.update({ sent: true });
+                console.log(`✅ รอบสุดท้ายแล้ว ปิดการส่ง`);
+            }
+        });
+    } catch (err) {
+        console.error('❌ Error in cron job:', err);
     }
-
-    const promises = [];
-    usersSnapshot.forEach(doc => {
-      const userId = doc.id; // หรือ doc.data().userId
-      promises.push(client.pushMessage(userId, {
-        type: 'text',
-        text: message,
-      }));
-    });
-
-    await Promise.all(promises);
-
-    res.json({ success: true, message: `Sent message to ${usersSnapshot.size} users.` });
-  } catch (error) {
-    console.error('Error sending message:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
 });
 
-const port = process.env.PORT || 3000;
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
+// === Start Server ===
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => {
+    console.log(`🚀 Server is running on port ${PORT}`);
 });

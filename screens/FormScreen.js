@@ -31,7 +31,6 @@ const actions = [
     { label: 'อื่นๆ', value: 'อื่นๆ' },
 ];
 
-// รวมวันที่กับเวลาเป็น Date เดียว
 function combineDateAndTime(date, time) {
     const combined = new Date(date);
     combined.setHours(time.getHours());
@@ -46,6 +45,8 @@ export default function FormScreen() {
     const [topic, setTopic] = useState('');
     const [action, setAction] = useState('');
     const [detail, setDetail] = useState('');
+    const [fixHour, setFixHour] = useState('0');
+    const [fixMinute, setFixMinute] = useState('0');
     const [notifyDate, setNotifyDate] = useState(new Date());
     const [notifyTime, setNotifyTime] = useState(new Date());
     const [showDatePicker, setShowDatePicker] = useState(false);
@@ -62,8 +63,7 @@ export default function FormScreen() {
 
         const combinedDateTime = combineDateAndTime(notifyDate, notifyTime);
         const frequencyText = `ทุก ${frequencyHour} ชั่วโมง ${frequencyMinute} นาที`;
-
-        console.log("Frequency : ", frequencyText);
+        const fixTimeText = `${fixHour} ชั่วโมง ${fixMinute} นาที`;
 
         try {
             await addDoc(collection(db, 'news'), {
@@ -74,28 +74,27 @@ export default function FormScreen() {
                 notifyTime: Timestamp.fromDate(combinedDateTime),
                 repeatCount: parseInt(repeatCount),
                 frequency: frequencyText,
+                fixTime: fixTimeText,
                 createdAt: Timestamp.now(),
                 sent: false,
             });
 
-            // 🔥 เรียก API ไปหลังบ้าน (สมมุติว่า POST พร้อม body)
-            await fetch('https://village-link.onrender.com/api/send-line', {
+            await fetch('https://village-link.onrender.com/notify', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    message: `📢 แจ้งข่าวจาก${village}\nหัวข้อ: ${topic}\nการจัดการ: ${action}\nรายละเอียด: ${detail}\nเวลา: ${combinedDateTime.toLocaleString()}`,
+                    message: `📢 แจ้งข่าวจาก${village}\nหัวข้อ: ${topic}\nการจัดการ: ${action}\nรายละเอียด: ${detail}\nเวลา: ${combinedDateTime.toLocaleString()}\nเวลาจัดการโดยประมาณ: ${fixTimeText}`,
                 }),
             });
 
             Alert.alert('บันทึกข้อมูลเรียบร้อย');
 
-            // Reset ฟอร์ม
             setVillage('');
             setTopic('');
             setAction('');
             setDetail('');
+            setFixHour('0');
+            setFixMinute('0');
             setRepeatCount('');
             setFrequencyHour('0');
             setFrequencyMinute('0');
@@ -105,7 +104,6 @@ export default function FormScreen() {
             console.error(err);
             Alert.alert('เกิดข้อผิดพลาด');
         }
-
     };
 
     return (
@@ -144,7 +142,26 @@ export default function FormScreen() {
                     placeholder="รายละเอียดเพิ่มเติม"
                 />
 
-                {/* วันที่ */}
+                <Text style={styles.label}>เวลาจัดการโดยประมาณ</Text>
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                    <TextInput
+                        style={styles.input}
+                        value={fixHour}
+                        onChangeText={setFixHour}
+                        keyboardType="numeric"
+                        placeholder="เช่น 1, 2, 3"
+                    />
+                    <Text style={styles.label}>ชั่วโมง</Text>
+                    <TextInput
+                        style={styles.input}
+                        value={fixMinute}
+                        onChangeText={setFixMinute}
+                        keyboardType="numeric"
+                        placeholder="เช่น 1, 2, 3"
+                    />
+                    <Text style={styles.label}>นาที</Text>
+                </View>
+
                 <Text style={styles.label}>เลือกวันที่แจ้ง</Text>
                 {Platform.OS === 'web' ? (
                     <input
@@ -170,8 +187,7 @@ export default function FormScreen() {
                     </>
                 )}
 
-                {/* เวลา */}
-                <Text style={styles.label}>เลือกเวลาที่แจ้ง</Text>
+                <Text style={styles.label}>เลือกเวลาที่ดำเนินการ</Text>
                 {Platform.OS === 'web' ? (
                     <input
                         type="time"
@@ -212,7 +228,25 @@ export default function FormScreen() {
                 />
 
                 <Text style={styles.label}>ความถี่ในการแจ้งเตือน</Text>
-                <View style={{ flexDirection: 'row', gap: 10 }}>
+                 <View style={{ flexDirection: 'row', gap: 10 }}>
+                    <TextInput
+                        style={styles.input}
+                        value={frequencyHour}
+                        onChangeText={setFrequencyHour}
+                        keyboardType="numeric"
+                        placeholder="เช่น 1, 2, 3"
+                    />
+                    <Text style={styles.label}>ชั่วโมง</Text>
+                    <TextInput
+                        style={styles.input}
+                        value={frequencyMinute}
+                        onChangeText={setFrequencyMinute}
+                        keyboardType="numeric"
+                        placeholder="เช่น 1, 2, 3"
+                    />
+                    <Text style={styles.label}>นาที</Text>
+                </View>
+                {/* <View style={{ flexDirection: 'row', gap: 10 }}>
                     <View style={{ flex: 1 }}>
                         <RNPickerSelect
                             onValueChange={setFrequencyHour}
@@ -229,7 +263,7 @@ export default function FormScreen() {
                             placeholder={{ label: 'นาที', value: '0' }}
                         />
                     </View>
-                </View>
+                </View> */}
 
                 <View style={{ marginTop: 20 }}>
                     <Button title="ส่งข่าว" onPress={handleSubmit} />
