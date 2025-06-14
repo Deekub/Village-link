@@ -250,7 +250,8 @@ app.get('/messages/:userId', async (req, res) => {
 });
 
 
-app.post('/send-message', async (req, res) => {
+app.post('/send-message', bodyParser.json(), async (req, res) => {
+    console.log('[DEBUG] req.body:', req.body);
   const { userId, message } = req.body;
   if (!userId || !message) {
     return res.status(400).json({ error: 'userId and message are required' });
