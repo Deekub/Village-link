@@ -5,7 +5,6 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { collection, addDoc, Timestamp } from 'firebase/firestore'; // นำกลับมา
 import { db } from '../firebaseConfig'; // นำกลับมา
 import { ScrollView } from 'react-native';
-const { addDoc, collection } = require('firebase/firestore');
 
 const villages = [
     { label: 'หมู่ 1', value: '1' },

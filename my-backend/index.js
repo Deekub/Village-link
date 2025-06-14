@@ -6,9 +6,9 @@ const line = require('@line/bot-sdk');
 const dotenv = require('dotenv');
 const cron = require('node-cron'); // ยังคง import ไว้เผื่อใช้งานในอนาคต แต่จะปิดการทำงานเดิม
 const cors = require('cors');
-const { Timestamp } = require('firebase-admin/firestore');
+// const { Timestamp } = require('firebase-admin/firestore'); // ไม่จำเป็นต้อง import Timestamp แยกจากตรงนี้
 const axios = require('axios');
-const { addDoc, collection } = require('firebase/firestore');
+// const { addDoc, collection } = require('firebase/firestore'); // *** ลบบรรทัดนี้ออก ***
 
 dotenv.config();
 
@@ -28,7 +28,9 @@ admin.initializeApp({
     }),
 });
 
-const db = admin.firestore();
+// *** ดึง getFirestore และ Timestamp จาก firebase-admin/firestore โดยตรง ***
+const { getFirestore, Timestamp } = require('firebase-admin/firestore');
+const db = getFirestore(); // *** ใช้ getFirestore() ที่นี่ ***
 
 // === LINE Bot Config ===
 const config = {
@@ -298,8 +300,8 @@ app.post('/notify', async (req, res) => {
             }
         }
 
-        // --- บันทึกข้อมูลลง Firestore (เป็น record การส่ง) ---
-        await addDoc(collection(db, 'news_broadcasts'), { // เปลี่ยน collection name เป็น news_broadcasts
+        // *** บันทึกข้อมูลลง Firestore (เป็น record การส่ง) โดยใช้ Admin SDK syntax ***
+        await db.collection('news_broadcasts').add({
             village,
             topic,
             action,
