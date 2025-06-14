@@ -2,10 +2,8 @@ const express = require('express');
 const { Client, middleware } = require('@line/bot-sdk');
 const admin = require('firebase-admin');
 const dotenv = require('dotenv');
-const path = require('path');
 
 dotenv.config();
-
 
 admin.initializeApp({
   credential: admin.credential.cert({
@@ -34,15 +32,8 @@ const app = express();
 
 app.use(express.json());
 
-// Serve static files from Expo web build
-app.use(express.static(path.join(__dirname, 'web-build')));
+// **ตัดการ serve static และ route index.html ออกทั้งหมด**
 
-// For any other route, serve the React app index.html
-app.get(/^\/(?!api|webhook|notify).*/, (req, res) => {
-  res.sendFile(path.join(__dirname, 'web-build', 'index.html'));
-});
-
-// Webhook endpoint รับ event จาก LINE
 app.post('/webhook', middleware(config), async (req, res) => {
   const events = req.body.events;
   try {
@@ -54,7 +45,6 @@ app.post('/webhook', middleware(config), async (req, res) => {
   }
 });
 
-// ฟังก์ชันจัดการ event
 async function handleEvent(event) {
   if (event.type === 'message' && event.message.type === 'text') {
     const userId = event.source.userId;
@@ -63,7 +53,6 @@ async function handleEvent(event) {
     console.log('userId:', userId);
     console.log('message:', messageText);
 
-    // เก็บ userId ลง Firestore (เก็บครั้งเดียว หรืออัพเดตข้อความล่าสุด)
     const userRef = db.collection('users').doc(userId);
     await userRef.set(
       {
@@ -73,7 +62,6 @@ async function handleEvent(event) {
       { merge: true }
     );
 
-    // ตอบกลับผู้ใช้ (optional)
     return client.replyMessage(event.replyToken, {
       type: 'text',
       text: 'ขอบคุณสำหรับข้อความครับ!',
@@ -82,7 +70,6 @@ async function handleEvent(event) {
   return Promise.resolve(null);
 }
 
-// API endpoint สำหรับยิงข้อความไปหา user โดยใช้ userId
 app.post('/notify', async (req, res) => {
   const { userId, message } = req.body;
 
