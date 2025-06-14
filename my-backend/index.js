@@ -217,7 +217,16 @@ cron.schedule('*/15 * * * *', async () => {
 app.get('/line-users', async (req, res) => {
   try {
     const snapshot = await db.collection('lineUsers').get();
-    const users = snapshot.docs.map(doc => ({ userId: doc.id }));
+    const users = [];
+
+    let count = 1;
+    snapshot.forEach(doc => {
+      users.push({
+        userId: doc.id,
+        label: `บุคคลที่ ${count++}`, // สร้างชื่อแทน
+      });
+    });
+
     res.json({ users });
   } catch (err) {
     console.error(err);
