@@ -206,6 +206,7 @@ app.get('/', (req, res) => {
 });
 
 // Endpoint สำหรับรับข้อมูลข่าวสารและส่ง LINE/SMS ทันที
+// Endpoint สำหรับรับข้อมูลข่าวสารและส่ง LINE/SMS ทันที
 app.post('/notify', async (req, res) => {
     const {
         village,
@@ -231,6 +232,17 @@ app.post('/notify', async (req, res) => {
     const parsedNotifyTime = new Date(notifyTime); // แปลงกลับเป็น Date object
 
     try {
+        // *** คำนวณ fixTimeText ที่นี่ใน scope ของ endpoint นี้ ***
+        const fih = parseInt(fixHour); // แปลงเป็น Int
+        const fim = parseInt(fixMinute); // แปลงเป็น Int
+        const fixTimeText = (() => {
+            if (fih === 0 && fim === 0) return 'ไม่ระบุ';
+            if (fih === 0) return `${fim} นาที`;
+            if (fim === 0) return `${fih} ชั่วโมง`;
+            return `${fih} ชั่วโมง ${fim} นาที`;
+        })();
+        // ******************************************************
+
         // --- ดึงผู้ใช้งาน LINE และ SMS ---
         const lineUsersSnapshot = await db.collection('lineUsers').get();
         const lineUserIds = lineUsersSnapshot.docs.map(doc => doc.id);
@@ -248,10 +260,11 @@ app.post('/notify', async (req, res) => {
         }
 
         // --- สร้างข้อความแจ้งเตือนทั้งหมดตามความถี่และจำนวนครั้ง ---
+        // generateMessages ยังคงรับ fixHour และ fixMinute ที่เป็นตัวเลขอยู่
         const scheduledMessages = generateMessages(
             parsedNotifyTime,
-            fixHour,
-            fixMinute,
+            fih, // ใช้ค่า fih ที่แปลงเป็น int แล้ว
+            fim, // ใช้ค่า fim ที่แปลงเป็น int แล้ว
             parseInt(repeatCount),
             parseInt(frequencyHour),
             parseInt(frequencyMinute),
@@ -264,8 +277,6 @@ app.post('/notify', async (req, res) => {
         // --- ส่งข้อความตามที่คำนวณได้ ---
         for (const msgData of scheduledMessages) {
             const { timeToSend, lineMessage, smsMessage } = msgData;
-            // ณ จุดนี้ เราจะส่งข้อความทันที (หรือตั้งเวลาส่งด้วยระบบ Queue หากต้องการ delay)
-            // แต่เนื่องจากคุณต้องการ "ทันที" เราจะยิงเลย
             
             console.log(`Attempting to send message for time: ${timeToSend.toLocaleString()}`);
 
@@ -300,14 +311,14 @@ app.post('/notify', async (req, res) => {
             }
         }
 
-        // *** บันทึกข้อมูลลง Firestore (เป็น record การส่ง) โดยใช้ Admin SDK syntax ***
+        // --- บันทึกข้อมูลลง Firestore (เป็น record การส่ง) โดยใช้ Admin SDK syntax ---
         await db.collection('news_broadcasts').add({
             village,
             topic,
             action,
             detail,
             notifyTime: Timestamp.fromDate(parsedNotifyTime),
-            fixTime: fixTimeText, // ใช้ fixTimeText ที่คำนวณแล้ว
+            fixTime: fixTimeText, // ** ใช้ fixTimeText ที่ถูกประกาศแล้ว **
             repeatCount: parseInt(repeatCount),
             frequencyHour: parseInt(frequencyHour),
             frequencyMinute: parseInt(frequencyMinute),
