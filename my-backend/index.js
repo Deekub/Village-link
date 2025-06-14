@@ -95,23 +95,18 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
 
 async function handleEvent(event) {
 
-     if (event.type === 'message' && event.message.type === 'text') {
+  if (event.type === 'message' && event.message.type === 'text') {
     const userId = event.source.userId;
     const text = event.message.text;
 
-    // บันทึกข้อความ incoming
+    // บันทึกข้อความ incoming พร้อม unread: true
     await db.collection('lineUsers').doc(userId)
       .collection('messages').add({
         direction: 'in', // ข้อความเข้ามา
         message: text,
         timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        unread: true,  // <-- เพิ่มบรรทัดนี้
       });
-
-    // ตัวอย่างตอบกลับอัตโนมัติ (optional)
-    // return client.replyMessage(event.replyToken, {
-    //   type: 'text',
-    //   text: `เราได้รับข้อความ: ${text}`,
-    // });
   } else if (event.type === 'follow') {
     const userId = event.source.userId;
 
@@ -132,7 +127,6 @@ async function handleEvent(event) {
       });
     } catch (error) {
       console.error('❌ Error saving new user:', error);
-      // ตอบกลับ error message ก็ได้ หรือ return null ก็ได้
       return null;
     }
   }
@@ -140,6 +134,7 @@ async function handleEvent(event) {
   // กรณี event อื่นๆ ไม่ได้สนใจ
   return Promise.resolve(null);
 }
+
 
 // === Cron Job: Run every 15 minutes ===
 cron.schedule('*/15 * * * *', async () => {
@@ -280,6 +275,25 @@ app.post('/send-message', bodyParser.json(), async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to send message' });
+  }
+});
+
+app.post('/mark-as-read/:userId', async (req, res) => {
+  const { userId } = req.params;
+  try {
+    const snapshot = await db.collection('lineUsers').doc(userId).collection('messages')
+      .where('unread', '==', true).get();
+
+    const batch = db.batch();
+    snapshot.forEach(doc => {
+      batch.update(doc.ref, { unread: false });
+    });
+
+    await batch.commit();
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to mark messages as read' });
   }
 });
 
