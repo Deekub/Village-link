@@ -90,7 +90,25 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
 });
 
 async function handleEvent(event) {
-  if (event.type === 'follow') {
+
+     if (event.type === 'message' && event.message.type === 'text') {
+    const userId = event.source.userId;
+    const text = event.message.text;
+
+    // บันทึกข้อความ incoming
+    await db.collection('lineUsers').doc(userId)
+      .collection('messages').add({
+        direction: 'in', // ข้อความเข้ามา
+        message: text,
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+    // ตัวอย่างตอบกลับอัตโนมัติ (optional)
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: `เราได้รับข้อความ: ${text}`,
+    });
+  } else if (event.type === 'follow') {
     const userId = event.source.userId;
 
     try {
@@ -195,6 +213,62 @@ cron.schedule('*/15 * * * *', async () => {
     console.error('❌ Error in cron job:', err);
   }
 });
+
+app.get('/line-users', async (req, res) => {
+  try {
+    const snapshot = await db.collection('lineUsers').get();
+    const users = snapshot.docs.map(doc => ({ userId: doc.id }));
+    res.json({ users });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+
+app.get('/messages/:userId', async (req, res) => {
+  const { userId } = req.params;
+  try {
+    const messagesRef = db.collection('lineUsers').doc(userId).collection('messages');
+    const snapshot = await messagesRef.orderBy('timestamp', 'asc').get();
+
+    const messages = snapshot.docs.map(doc => doc.data());
+    res.json({ messages });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch messages' });
+  }
+});
+
+
+app.post('/send-message', async (req, res) => {
+  const { userId, message } = req.body;
+  if (!userId || !message) {
+    return res.status(400).json({ error: 'userId and message are required' });
+  }
+
+  try {
+    // ส่งข้อความผ่าน LINE API
+    await client.pushMessage(userId, {
+      type: 'text',
+      text: message,
+    });
+
+    // บันทึกข้อความ outgoing
+    await db.collection('lineUsers').doc(userId)
+      .collection('messages').add({
+        direction: 'out', // ข้อความส่งออก
+        message,
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to send message' });
+  }
+});
+
 
 // === Start Server ===
 const PORT = process.env.PORT || 3001;

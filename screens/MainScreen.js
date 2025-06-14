@@ -7,6 +7,8 @@ export default function MainScreen({ navigation }) {
       <Button title="ส่งข่าวสาร" onPress={() => navigation.navigate('Form')} />
       <View style={{ marginTop: 10 }} />
       <Button title="ดูรายการข่าวที่ส่งแล้ว" onPress={() => navigation.navigate('History')} />
+    <View style={{ marginTop: 10 }} />
+      <Button title="ช่องแชท" onPress={() => navigation.navigate('ChatAdmin')} />
     </View>
   );
 }
