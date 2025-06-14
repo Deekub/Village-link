@@ -1,18 +1,14 @@
 const express = require('express');
-const cors = require('cors'); // ✅ เพิ่ม cors
 const app = express();
-
 const bodyParser = require('body-parser');
 const admin = require('firebase-admin');
 const line = require('@line/bot-sdk');
 const dotenv = require('dotenv');
 const cron = require('node-cron');
+const cors = require('cors');
 const { Timestamp } = require('firebase-admin/firestore');
 
 dotenv.config();
-
-app.use(cors()); // ✅ เพิ่ม middleware นี้
-app.use(bodyParser.json());
 
 // === Initialize Firebase Admin SDK ===
 admin.initializeApp({
@@ -34,90 +30,129 @@ const db = admin.firestore();
 
 // === LINE Bot Config ===
 const config = {
-    channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
-    channelSecret: process.env.LINE_CHANNEL_SECRET,
+  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
+  channelSecret: process.env.LINE_CHANNEL_SECRET,
 };
 const client = new line.Client(config);
 
 // === Middleware ===
+app.use(cors());
 app.use(bodyParser.json());
 
 // === Routes ===
 app.get('/', (req, res) => {
-    res.send('👋 Hello from Node.js + Firebase + LINE API Server!');
+  res.send('👋 Hello from Node.js + Firebase + LINE API Server!');
+});
+
+// API สำหรับ frontend เรียกส่งข้อความ LINE ทันที
+app.post('/notify', async (req, res) => {
+  const { message } = req.body;
+  if (!message) {
+    return res.status(400).json({ error: 'Message is required' });
+  }
+
+  try {
+    const usersSnapshot = await db.collection('lineUsers').get();
+    if (usersSnapshot.empty) {
+      return res.status(404).json({ error: 'No LINE users found' });
+    }
+
+    const pushPromises = [];
+    usersSnapshot.forEach(userDoc => {
+      pushPromises.push(client.pushMessage(userDoc.id, {
+        type: 'text',
+        text: message,
+      }));
+    });
+
+    await Promise.all(pushPromises);
+
+    res.json({ message: `Sent to ${usersSnapshot.size} users.` });
+  } catch (error) {
+    console.error('Error sending LINE messages:', error);
+    res.status(500).json({ error: 'Failed to send messages' });
+  }
 });
 
 // === Cron Job: Run every 15 minutes ===
 cron.schedule('*/15 * * * *', async () => {
-    console.log('🔄 Running scheduled broadcast task');
+  console.log('🔄 Running scheduled broadcast task');
 
-    try {
-        const now = new Date();
+  try {
+    const now = new Date();
 
-        // Get news that need to be sent
-        const newsSnapshot = await db.collection('news')
-            .where('sent', '==', false)
-            .where('notifyTime', '<=', Timestamp.fromDate(now))
-            .get();
+    // ดึงข่าวที่ยังไม่ส่งและเวลาที่ต้องแจ้ง <= ตอนนี้
+    const newsSnapshot = await db.collection('news')
+      .where('sent', '==', false)
+      .where('notifyTime', '<=', Timestamp.fromDate(now))
+      .get();
 
-        if (newsSnapshot.empty) {
-            console.log('✅ No news to broadcast.');
-            return;
-        }
+    if (newsSnapshot.empty) {
+      console.log('✅ No news to broadcast.');
+      return;
+    }
 
-        // Get LINE users
-        const usersSnapshot = await db.collection('lineUsers').get();
-        if (usersSnapshot.empty) {
-            console.warn('⚠️ No LINE users found.');
-            return;
-        }
+    // ดึงผู้ใช้ LINE
+    const usersSnapshot = await db.collection('lineUsers').get();
+    if (usersSnapshot.empty) {
+      console.warn('⚠️ No LINE users found.');
+      return;
+    }
 
-        newsSnapshot.forEach(async (doc) => {
-            const data = doc.data();
+    for (const doc of newsSnapshot.docs) {
+      const data = doc.data();
 
-            const message = `📢 แจ้งข่าวจาก ${data.village}
+      const message = `📢 แจ้งข่าวจาก ${data.village}
 หัวข้อ: ${data.topic}
 การจัดการ: ${data.action}
 รายละเอียด: ${data.detail}
 เวลา: ${data.notifyTime.toDate().toLocaleString()}
 เวลาจัดการโดยประมาณ: ${data.fixTime}`;
 
-            const pushPromises = [];
-            usersSnapshot.forEach(userDoc => {
-                const userId = userDoc.id;
-                pushPromises.push(client.pushMessage(userId, {
-                    type: 'text',
-                    text: message,
-                }));
-            });
+      const pushPromises = [];
+      usersSnapshot.forEach(userDoc => {
+        pushPromises.push(client.pushMessage(userDoc.id, {
+          type: 'text',
+          text: message,
+        }));
+      });
 
-            await Promise.all(pushPromises);
-            console.log(`📬 ส่งข่าวให้ผู้ใช้ ${usersSnapshot.size} คน`);
+      await Promise.all(pushPromises);
+      console.log(`📬 ส่งข่าวให้ผู้ใช้ ${usersSnapshot.size} คน`);
 
-            // คำนวณรอบถัดไป (ถ้ามี repeatCount)
-            const [h, m] = data.frequency.match(/\d+/g).map(Number);
-            const nextTime = new Date();
-            nextTime.setHours(nextTime.getHours() + h);
-            nextTime.setMinutes(nextTime.getMinutes() + m);
+      // คำนวณเวลารอบถัดไป (ถ้ามี repeatCount)
+      // frequency ควรเป็นรูปแบบ "ทุก X ชั่วโมง Y นาที"
+      const freqMatch = data.frequency.match(/(\d+)/g);
+      if (freqMatch && freqMatch.length >= 2) {
+        const h = parseInt(freqMatch[0], 10);
+        const m = parseInt(freqMatch[1], 10);
+        const nextTime = data.notifyTime.toDate();
+        nextTime.setHours(nextTime.getHours() + h);
+        nextTime.setMinutes(nextTime.getMinutes() + m);
 
-            if (data.repeatCount > 1) {
-                await doc.ref.update({
-                    notifyTime: Timestamp.fromDate(nextTime),
-                    repeatCount: data.repeatCount - 1,
-                });
-                console.log(`🔁 เตรียมรอบถัดไปอีก ${data.repeatCount - 1} ครั้ง`);
-            } else {
-                await doc.ref.update({ sent: true });
-                console.log(`✅ รอบสุดท้ายแล้ว ปิดการส่ง`);
-            }
-        });
-    } catch (err) {
-        console.error('❌ Error in cron job:', err);
+        if (data.repeatCount > 1) {
+          await doc.ref.update({
+            notifyTime: Timestamp.fromDate(nextTime),
+            repeatCount: data.repeatCount - 1,
+          });
+          console.log(`🔁 เตรียมรอบถัดไปอีก ${data.repeatCount - 1} ครั้ง`);
+        } else {
+          await doc.ref.update({ sent: true });
+          console.log(`✅ รอบสุดท้ายแล้ว ปิดการส่ง`);
+        }
+      } else {
+        // frequency ไม่ถูกต้องหรือไม่มี
+        await doc.ref.update({ sent: true });
+        console.log(`❌ frequency ไม่ถูกต้อง ปิดการส่ง`);
+      }
     }
+  } catch (err) {
+    console.error('❌ Error in cron job:', err);
+  }
 });
 
 // === Start Server ===
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-    console.log(`🚀 Server is running on port ${PORT}`);
+  console.log(`🚀 Server is running on port ${PORT}`);
 });

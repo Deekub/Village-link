@@ -61,8 +61,24 @@ export default function FormScreen() {
             return;
         }
 
+        const fh = parseInt(frequencyHour) || 0;
+        const fm = parseInt(frequencyMinute) || 0;
+        const rc = parseInt(repeatCount);
+
+        // validation ความถี่และจำนวนครั้ง
+        if (fh === 0 && fm === 0) {
+            // frequency = 0 หมายถึงส่งครั้งเดียวเท่านั้น
+            if (rc > 1) {
+                Alert.alert('กรุณาระบุความถี่อย่างน้อย 15 นาที หากต้องการส่งหลายครั้ง');
+                return;
+            }
+        } else if (fh === 0 && fm > 0 && fm < 15) {
+            Alert.alert('กรุณาระบุความถี่อย่างน้อย 15 นาที');
+            return;
+        }
+
         const combinedDateTime = combineDateAndTime(notifyDate, notifyTime);
-        const frequencyText = `ทุก ${frequencyHour} ชั่วโมง ${frequencyMinute} นาที`;
+        const frequencyText = `ทุก ${fh} ชั่วโมง ${fm} นาที`;
         const fixTimeText = `${fixHour} ชั่วโมง ${fixMinute} นาที`;
 
         try {
@@ -72,7 +88,7 @@ export default function FormScreen() {
                 action,
                 detail,
                 notifyTime: Timestamp.fromDate(combinedDateTime),
-                repeatCount: parseInt(repeatCount),
+                repeatCount: rc,
                 frequency: frequencyText,
                 fixTime: fixTimeText,
                 createdAt: Timestamp.now(),
@@ -228,7 +244,7 @@ export default function FormScreen() {
                 />
 
                 <Text style={styles.label}>ความถี่ในการแจ้งเตือน</Text>
-                 <View style={{ flexDirection: 'row', gap: 10 }}>
+                <View style={{ flexDirection: 'row', gap: 10 }}>
                     <TextInput
                         style={styles.input}
                         value={frequencyHour}
@@ -246,25 +262,6 @@ export default function FormScreen() {
                     />
                     <Text style={styles.label}>นาที</Text>
                 </View>
-                {/* <View style={{ flexDirection: 'row', gap: 10 }}>
-                    <View style={{ flex: 1 }}>
-                        <RNPickerSelect
-                            onValueChange={setFrequencyHour}
-                            value={frequencyHour}
-                            items={[...Array(24).keys()].map((h) => ({ label: `${h} ชั่วโมง`, value: h.toString() }))}
-                            placeholder={{ label: 'ชั่วโมง', value: '0' }}
-                        />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                        <RNPickerSelect
-                            onValueChange={setFrequencyMinute}
-                            value={frequencyMinute}
-                            items={[0, 15, 30, 45].map((m) => ({ label: `${m} นาที`, value: m.toString() }))}
-                            placeholder={{ label: 'นาที', value: '0' }}
-                        />
-                    </View>
-                </View> */}
-
                 <View style={{ marginTop: 20 }}>
                     <Button title="ส่งข่าว" onPress={handleSubmit} />
                 </View>
