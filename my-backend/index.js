@@ -168,6 +168,8 @@ async function sendSmsViaThaiBulkSms(phoneNumber, message) {
       // force: 'corporate', // ถ้าต้องการใช้ Corporate SMS ให้เปิดบรรทัดนี้
     }).toString();
 
+    console.log("req body",requestBody);
+
     const response = await axios.post(THAI_BULK_SMS_API_URL, requestBody, {
       headers: {
         'Authorization': authHeader,
