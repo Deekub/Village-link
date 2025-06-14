@@ -8,6 +8,7 @@ const cron = require('node-cron'); // ยังคง import ไว้เผื�
 const cors = require('cors');
 const { Timestamp } = require('firebase-admin/firestore');
 const axios = require('axios');
+const { addDoc, collection } = require('firebase/firestore');
 
 dotenv.config();
 
