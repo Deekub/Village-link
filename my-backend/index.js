@@ -71,23 +71,39 @@ async function handleEvent(event) {
 }
 
 app.post('/notify', async (req, res) => {
-  const { userId, message } = req.body;
+  const { message } = req.body;
 
-  if (!userId || !message) {
-    return res.status(400).json({ success: false, error: 'Missing userId or message' });
+  if (!message) {
+    return res.status(400).json({ success: false, error: 'Missing message' });
   }
 
   try {
-    await client.pushMessage(userId, {
-      type: 'text',
-      text: message,
+    // ดึง userId ทั้งหมดจาก Firestore (collection 'lineuser' หรือ 'users')
+    const usersSnapshot = await db.collection('lineuser').get();
+
+    if (usersSnapshot.empty) {
+      return res.status(404).json({ success: false, error: 'No users found' });
+    }
+
+    // ส่งข้อความไปยังทุก userId ที่ดึงมา
+    const promises = [];
+    usersSnapshot.forEach(doc => {
+      const userId = doc.id; // หรือ doc.data().userId ถ้าเก็บใน field
+      promises.push(client.pushMessage(userId, {
+        type: 'text',
+        text: message,
+      }));
     });
-    res.json({ success: true });
+
+    await Promise.all(promises);
+
+    res.json({ success: true, message: `Sent message to ${usersSnapshot.size} users.` });
   } catch (error) {
     console.error('Error sending message:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
