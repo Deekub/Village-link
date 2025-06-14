@@ -45,6 +45,8 @@ const THAI_BULK_SMS_API_KEY = process.env.THAI_BULK_SMS_API_KEY;
 const THAI_BULK_SMS_API_SECRET = process.env.THAI_BULK_SMS_API_SECRET;
 const THAI_BULK_SMS_SENDER_NAME = process.env.THAI_BULK_SMS_SENDER_NAME;
 
+console.log("sender :", THAI_BULK_SMS_SENDER_NAME)
+
 // ตรวจสอบว่า API Keys ถูกตั้งค่าหรือไม่ (แสดงคำเตือนแต่ไม่หยุดแอป)
 if (!THAI_BULK_SMS_API_KEY || !THAI_BULK_SMS_API_SECRET) {
   console.warn("🚨 THAI_BULK_SMS_API_KEY and THAI_BULK_SMS_API_SECRET are not fully set in .env. SMS sending might be affected.");
