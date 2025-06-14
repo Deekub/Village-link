@@ -4,11 +4,10 @@ const bodyParser = require('body-parser');
 const admin = require('firebase-admin');
 const line = require('@line/bot-sdk');
 const dotenv = require('dotenv');
-const cron = require('node-cron'); // ยังคง import ไว้เผื่อใช้งานในอนาคต แต่จะปิดการทำงานเดิม
+const cron = require('node-cron');
 const cors = require('cors');
-// const { Timestamp } = require('firebase-admin/firestore'); // ไม่จำเป็นต้อง import Timestamp แยกจากตรงนี้
+const { getFirestore, Timestamp } = require('firebase-admin/firestore');
 const axios = require('axios');
-// const { addDoc, collection } = require('firebase/firestore'); // *** ลบบรรทัดนี้ออก ***
 
 dotenv.config();
 
@@ -28,9 +27,7 @@ admin.initializeApp({
     }),
 });
 
-// *** ดึง getFirestore และ Timestamp จาก firebase-admin/firestore โดยตรง ***
-const { getFirestore, Timestamp } = require('firebase-admin/firestore');
-const db = getFirestore(); // *** ใช้ getFirestore() ที่นี่ ***
+const db = getFirestore();
 
 // === LINE Bot Config ===
 const config = {
@@ -45,7 +42,7 @@ console.log('🔐 LINE_CHANNEL_SECRET:', process.env.LINE_CHANNEL_SECRET);
 const THAI_BULK_SMS_API_URL = 'https://api-v2.thaibulksms.com/sms';
 const THAI_BULK_SMS_API_KEY = process.env.THAI_BULK_SMS_API_KEY;
 const THAI_BULK_SMS_API_SECRET = process.env.THAI_BULK_SMS_API_SECRET;
-const THAI_BULK_SMS_SENDER_NAME = process.env.THAI_BULK_SMS_SENDER_NAME; // เราจะส่ง sender ใน request body
+const THAI_BULK_SMS_SENDER_NAME = process.env.THAI_BULK_SMS_SENDER_NAME;
 
 console.log("sender :", THAI_BULK_SMS_SENDER_NAME);
 
@@ -57,38 +54,37 @@ if (!THAI_BULK_SMS_API_KEY || !THAI_BULK_SMS_API_SECRET || !THAI_BULK_SMS_SENDER
 
 // === Middleware ===
 app.use(cors({
-    origin: ['http://localhost:8081', 'https://village-link.vercel.app', 'https://example.com'], // เพิ่ม Production URL ของ Frontend ที่นี่
+    origin: ['http://localhost:8081', 'https://village-link.vercel.app', 'https://example.com'],
     methods: ['GET', 'POST'],
     allowedHeaders: ['Content-Type'],
 }));
-app.use(bodyParser.json()); // ใช้ bodyParser.json() แบบ global อีกครั้ง เพื่อความสะดวก
+app.use(bodyParser.json());
 
 // === Helper Functions ===
 
-// แปลงวันที่เป็น วว/ดด/ปปปป (ปี พ.ศ. 2 หลัก)
 const formatDate = (date) => {
     const dd = String(date.getDate()).padStart(2, '0');
     const mm = String(date.getMonth() + 1).padStart(2, '0');
-    // แปลงปี ค.ศ. ให้เป็น พ.ศ. (yyyy+543) และใช้แค่ 2 หลักสุดท้าย
     const yyyyBuddhist = String(date.getFullYear() + 543).slice(-2);
     return `${dd}/${mm}/${yyyyBuddhist}`;
 };
 
-// แปลงเวลาเป็น hh:mm (24 ชั่วโมง)
 const formatTime24 = (date) => {
     const hh = String(date.getHours()).padStart(2, '0');
     const min = String(date.getMinutes()).padStart(2, '0');
     return `${hh}:${min}`;
 };
 
-// ฟังก์ชันสำหรับสร้างข้อความแจ้งเตือน (LINE และ SMS) พร้อมคำนวณเวลา
+// ฟังก์ชันสำหรับสร้างข้อความ (LINE หลายรอบ, SMS รอบเดียว) พร้อมคำนวณเวลา
+// จะคืนค่าเป็น Array ของ { lineMessage, smsMessage, timeToSend }
+// โดยที่ smsMessage จะมีค่าสำหรับ timeToSend ครั้งแรกเท่านั้น
 function generateMessages(
-    notifyDateTime, // Combined Date and Time of the event
+    eventTime, // Base event time (Date object)
     fixHour,
     fixMinute,
-    repeatCount,
-    frequencyHour,
-    frequencyMinute,
+    lineRepeatCount, // สำหรับ LINE
+    lineFrequencyHour,
+    lineFrequencyMinute,
     village,
     topic,
     action,
@@ -96,7 +92,6 @@ function generateMessages(
 ) {
     const messages = [];
     const notificationTimes = [];
-    const eventTime = new Date(notifyDateTime); // เวลาเริ่มต้นของกิจกรรม (เช่น 7:30 น.)
 
     // คำนวณเวลาสิ้นสุดการซ่อม
     const finishRepairTime = new Date(
@@ -112,13 +107,17 @@ function generateMessages(
         return `${h} ชั่วโมง ${m} นาที`;
     })();
 
-    // คำนวณเวลาแจ้งเตือนย้อนหลัง
-    for (let i = 0; i < repeatCount; i++) {
+    // คำนวณเวลาแจ้งเตือนย้อนหลังสำหรับ LINE
+    // ถ้า lineRepeatCount เป็น 1 หรือ 0 ก็ส่งแค่ครั้งเดียวที่ eventTime
+    const actualLineRepeatCount = parseInt(lineRepeatCount) > 0 ? parseInt(lineRepeatCount) : 1;
+
+    for (let i = 0; i < actualLineRepeatCount; i++) {
         const currentNotifyTime = new Date(eventTime.getTime() -
-            (i * (parseInt(frequencyHour) * 60 + parseInt(frequencyMinute))) * 60 * 1000);
+            (i * (parseInt(lineFrequencyHour) * 60 + parseInt(lineFrequencyMinute))) * 60 * 1000);
         notificationTimes.unshift(currentNotifyTime); // Add to the beginning to keep chronological order
     }
-
+    
+    // สร้างข้อความสำหรับแต่ละรอบ (LINE) และสำหรับ SMS (เฉพาะรอบแรก)
     notificationTimes.forEach((time, index) => {
         const lineMessage = `📢 แจ้งข่าวบริเวณ ${village} 📢
 🏷️หัวข้อ: ${topic}
@@ -128,23 +127,23 @@ function generateMessages(
 ⏰เวลา: ${formatTime24(eventTime)} น.
 ⏰ใช้เวลา : ${fixTimeText}
 📅เวลาเสร็จสิ้นประมาณ: ${formatTime24(finishRepairTime)} น.
-${repeatCount > 1 ? `(การแจ้งเตือนครั้งที่ ${index + 1} จาก ${repeatCount})` : ''}`;
+${actualLineRepeatCount > 1 ? `(การแจ้งเตือนครั้งที่ ${index + 1} จาก ${actualLineRepeatCount})` : ''}`;
 
-        // สำหรับ SMS ควรจะกระชับกว่า LINE
-let smsMessage = `แจ้ง: หมู่ ${village} ${topic} ${formatDate(eventTime)} ${formatTime24(eventTime)}-${formatTime24(finishRepairTime)}น. ${fixTimeText}`;
-    if (repeatCount > 1) {
-        smsMessage += ` (ครั้งที่ ${index + 1}/${repeatCount})`;
-    }
-        // จำกัดความยาว SMS หากจำเป็น (Thaibulksms 1 Segment = 70 ตัวอักษรสำหรับภาษาไทย)
-        // คุณอาจจะต้องมี logic การตัดหรือย่อข้อความที่ซับซ้อนขึ้นอยู่กับความต้องการ
-        if (smsMessage.length > 150) { // ประมาณ 2 segments
-            smsMessage = smsMessage.substring(0, 150) + '...'; // ตัดข้อความ
+        let smsMessage = null; // Default: SMS ไม่ส่งในรอบนี้
+
+        // SMS จะถูกสร้างและส่งเฉพาะครั้งแรกเท่านั้น (index === 0)
+        if (index === 0) {
+            let smsText = `แจ้ง: ม.${village} ${topic} ${action} ${formatDate(eventTime)} ${formatTime24(eventTime)}-${formatTime24(finishRepairTime)}น. ใช้ ${fixTimeText}`;
+            if (smsText.length > 65) { // ตัดข้อความ SMS หากยาวเกินไป (เพื่อให้มั่นใจอยู่ใน 1 segment)
+                smsText = smsText.substring(0, 62) + '...';
+            }
+            smsMessage = smsText;
         }
         
         messages.push({
             timeToSend: time,
             lineMessage: lineMessage,
-            smsMessage: smsMessage
+            smsMessage: smsMessage // smsMessage จะเป็น null ในรอบที่ > 0
         });
     });
 
@@ -158,13 +157,17 @@ async function sendSmsViaThaiBulkSms(phoneNumber, message) {
         console.warn("⚠️ SMS API credentials not fully set. Skipping SMS send for this call.");
         return { success: false, error: "SMS API credentials not set" };
     }
+    if (!phoneNumber || !message) {
+        console.warn("⚠️ Phone number or message is missing for SMS. Skipping SMS send.");
+        return { success: false, error: "Phone number or message is missing" };
+    }
 
     try {
         const authHeader = 'Basic ' + Buffer.from(THAI_BULK_SMS_API_KEY + ':' + THAI_BULK_SMS_API_SECRET).toString('base64');
         const requestBody = new URLSearchParams({
             msisdn: phoneNumber,
             message: message,
-            sender: THAI_BULK_SMS_SENDER_NAME, // ส่ง Sender Name ด้วย
+            sender: THAI_BULK_SMS_SENDER_NAME,
         }).toString();
 
         console.log("Sending SMS Request Body:", requestBody);
@@ -206,17 +209,16 @@ app.get('/', (req, res) => {
 });
 
 // Endpoint สำหรับรับข้อมูลข่าวสารและส่ง LINE/SMS ทันที
-// Endpoint สำหรับรับข้อมูลข่าวสารและส่ง LINE/SMS ทันที
 app.post('/notify', async (req, res) => {
     const {
         village,
         topic,
         action,
         detail,
-        notifyTime, // จะเป็น ISO string จาก Frontend
+        notifyTime, // จะเป็น ISO string จาก Frontend (เวลาที่ใช้จริงในการส่งทันที)
         fixHour,
         fixMinute,
-        repeatCount,
+        repeatCount, // จำนวนรอบการแจ้งเตือน LINE ล่วงหน้า (ใช้เพื่อสร้างข้อความ LINE)
         frequencyHour,
         frequencyMinute,
         sendSms // true/false จาก Frontend
@@ -225,25 +227,14 @@ app.post('/notify', async (req, res) => {
     // Validate required fields
     if (!village || !topic || !action || !detail || !notifyTime ||
         fixHour === undefined || fixMinute === undefined ||
-        repeatCount === undefined || frequencyHour === undefined || frequencyMinute === undefined) {
+        repeatCount === undefined || frequencyHour === undefined || frequencyMinute === undefined ||
+        sendSms === undefined) {
         return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    const parsedNotifyTime = new Date(notifyTime); // แปลงกลับเป็น Date object
+    const parsedNotifyTime = new Date(notifyTime);
 
     try {
-        // *** คำนวณ fixTimeText ที่นี่ใน scope ของ endpoint นี้ ***
-        const fih = parseInt(fixHour); // แปลงเป็น Int
-        const fim = parseInt(fixMinute); // แปลงเป็น Int
-        const fixTimeText = (() => {
-            if (fih === 0 && fim === 0) return 'ไม่ระบุ';
-            if (fih === 0) return `${fim} นาที`;
-            if (fim === 0) return `${fih} ชั่วโมง`;
-            return `${fih} ชั่วโมง ${fim} นาที`;
-        })();
-        // ******************************************************
-
-        // --- ดึงผู้ใช้งาน LINE และ SMS ---
         const lineUsersSnapshot = await db.collection('lineUsers').get();
         const lineUserIds = lineUsersSnapshot.docs.map(doc => doc.id);
 
@@ -259,13 +250,13 @@ app.post('/notify', async (req, res) => {
             console.warn('⚠️ Send SMS selected, but no valid SMS recipients found.');
         }
 
-        // --- สร้างข้อความแจ้งเตือนทั้งหมดตามความถี่และจำนวนครั้ง ---
-        // generateMessages ยังคงรับ fixHour และ fixMinute ที่เป็นตัวเลขอยู่
-        const scheduledMessages = generateMessages(
-            parsedNotifyTime,
-            fih, // ใช้ค่า fih ที่แปลงเป็น int แล้ว
-            fim, // ใช้ค่า fim ที่แปลงเป็น int แล้ว
-            parseInt(repeatCount),
+        // generateMessages จะสร้างข้อความ LINE หลายๆ รอบ (ถ้า repeatCount > 1)
+        // และจะสร้าง SMS Message เฉพาะสำหรับรอบแรก (index 0)
+        const allGeneratedMessages = generateMessages(
+            parsedNotifyTime, // ใช้เวลาที่รับมาเป็น base
+            parseInt(fixHour),
+            parseInt(fixMinute),
+            parseInt(repeatCount), // จำนวนรอบ LINE
             parseInt(frequencyHour),
             parseInt(frequencyMinute),
             village, topic, action, detail
@@ -273,12 +264,14 @@ app.post('/notify', async (req, res) => {
 
         let lineSentCount = 0;
         let smsSentCount = 0;
+        
+        // สำหรับ /notify เราจะส่งทันที โดยใช้ข้อมูลของ 'รอบแรก' ที่ generateMessages สร้างให้
+        const immediateMessageData = allGeneratedMessages[0]; // ข้อความสำหรับเวลา notifyTime ที่ระบุ
 
-        // --- ส่งข้อความตามที่คำนวณได้ ---
-        for (const msgData of scheduledMessages) {
-            const { timeToSend, lineMessage, smsMessage } = msgData;
-            
-            console.log(`Attempting to send message for time: ${timeToSend.toLocaleString()}`);
+        if (immediateMessageData) {
+            const { lineMessage, smsMessage } = immediateMessageData;
+
+            console.log(`Attempting to send immediate broadcast.`);
 
             // ส่ง LINE Notification
             if (lineUserIds.length > 0) {
@@ -291,47 +284,48 @@ app.post('/notify', async (req, res) => {
                 });
                 await Promise.all(linePushPromises);
                 lineSentCount += lineUserIds.length;
-                console.log(`📬 LINE message sent to ${lineUserIds.length} users for time ${timeToSend.toLocaleTimeString()}`);
+                console.log(`📬 LINE message sent to ${lineUserIds.length} users.`);
             }
 
-            // ส่ง SMS
-            if (sendSms && smsPhoneNumbers.length > 0) {
-                const smsSendPromises = [];
+            // ส่ง SMS (ถ้า sendSms เป็น true และมีเบอร์ และ smsMessage มีค่า - ซึ่งควรจะมีสำหรับ index 0)
+            if (sendSms && smsMessage && smsPhoneNumbers.length > 0) {
+                const smsResults = [];
                 for (const phoneNumber of smsPhoneNumbers) {
-                    smsSendPromises.push(sendSmsViaThaiBulkSms(phoneNumber, smsMessage));
+                    const result = await sendSmsViaThaiBulkSms(phoneNumber, smsMessage);
+                    smsResults.push(result);
+                    if (result.success) {
+                        smsSentCount++;
+                    }
                 }
-                const smsResults = await Promise.all(smsSendPromises);
-                smsSentCount += smsPhoneNumbers.length; // นับจำนวนที่พยายามส่ง
-                console.log(`📱 SMS message sent to ${smsPhoneNumbers.length} numbers for time ${timeToSend.toLocaleTimeString()}`);
-            }
-
-            // เพิ่ม delay สั้นๆ ระหว่างการส่งแต่ละรอบ เพื่อไม่ให้ API โหลดเกินไป (ถ้ามีการส่งหลายครั้งมากๆ)
-            if (scheduledMessages.length > 1) {
-                await new Promise(resolve => setTimeout(resolve, 500)); // 0.5 วินาที
+                console.log(`📱 SMS message attempted to send to ${smsPhoneNumbers.length} numbers. ${smsSentCount} succeeded.`);
+            } else if (sendSms && !smsMessage) {
+                 console.warn("⚠️ SMS send requested, but smsMessage was null for immediate broadcast. This should not happen.");
             }
         }
 
-        // --- บันทึกข้อมูลลง Firestore (เป็น record การส่ง) โดยใช้ Admin SDK syntax ---
+
+        // --- บันทึกข้อมูลลง Firestore ใน collection 'news_broadcasts' ---
+        // บันทึกเฉพาะข้อมูลของการส่งทันที
         await db.collection('news_broadcasts').add({
             village,
             topic,
             action,
             detail,
             notifyTime: Timestamp.fromDate(parsedNotifyTime),
-            fixTime: fixTimeText, // ** ใช้ fixTimeText ที่ถูกประกาศแล้ว **
-            repeatCount: parseInt(repeatCount),
+            fixHour: parseInt(fixHour),
+            fixMinute: parseInt(fixMinute),
+            repeatCount: parseInt(repeatCount), // เก็บ repeatCount และ frequency ตามที่ผู้ใช้ต้องการ
             frequencyHour: parseInt(frequencyHour),
             frequencyMinute: parseInt(frequencyMinute),
             sendSms: sendSms,
-            messagesSent: scheduledMessages.length, // จำนวนข้อความที่ส่ง
             lineUsersNotified: lineSentCount,
             smsNumbersNotified: smsSentCount,
-            broadcastedAt: Timestamp.now(), // เวลาที่กดส่งข่าว
+            broadcastedAt: Timestamp.now(), // เวลาที่ทำการ broadcast นี้
         });
 
 
         res.json({
-            message: `Broadcast initiated successfully. ${lineSentCount} LINE messages and ${smsSentCount} SMS messages attempted.`,
+            message: `Immediate broadcast initiated successfully. ${lineSentCount} LINE messages and ${smsSentCount} SMS messages attempted.`,
             lineSentCount,
             smsSentCount
         });
@@ -358,10 +352,9 @@ async function handleEvent(event) {
         const userId = event.source.userId;
         const text = event.message.text;
 
-        // บันทึกข้อความ incoming พร้อม unread: true
         await db.collection('lineUsers').doc(userId)
             .collection('messages').add({
-                direction: 'in', // ข้อความเข้ามา
+                direction: 'in',
                 message: text,
                 timestamp: admin.firestore.FieldValue.serverTimestamp(),
                 unread: true,
@@ -390,9 +383,9 @@ async function handleEvent(event) {
         }
     }
 
-    // กรณี event อื่นๆ ไม่ได้สนใจ
     return Promise.resolve(null);
 }
+
 
 // === Route สำหรับยิง SMS ด้วยตนเอง (Manual Trigger) ===
 app.post('/send-sms', async (req, res) => {
@@ -402,19 +395,24 @@ app.post('/send-sms', async (req, res) => {
     }
 
     if (!THAI_BULK_SMS_API_KEY || !THAI_BULK_SMS_API_SECRET || !THAI_BULK_SMS_SENDER_NAME) {
-        return res.status(503).json({ error: "SMS API credentials not fully set. Please configure .env file." });
+        return res.status(503).json({ error: "SMS API credentials not fully set. Please configure .env file and ensure Sender Name is set." });
     }
 
     const phoneNumbers = Array.isArray(phoneNumber) ? phoneNumber : [phoneNumber];
     const results = [];
+    let successCount = 0;
 
     for (const num of phoneNumbers) {
         const result = await sendSmsViaThaiBulkSms(num, message);
         results.push({ phoneNumber: num, ...result });
+        if (result.success) {
+            successCount++;
+        }
     }
 
-    res.json({ message: 'SMS sending process initiated', results });
+    res.json({ message: `SMS sending process initiated. ${successCount} successful.`, results, successCount });
 });
+
 
 // ส่วนของ /line-users, /messages/:userId, /send-message, /mark-as-read/:userId ยังคงเหมือนเดิม
 app.get('/line-users', async (req, res) => {
@@ -451,6 +449,7 @@ app.get('/line-users', async (req, res) => {
     }
 });
 
+
 app.get('/messages/:userId', async (req, res) => {
     const { userId } = req.params;
     try {
@@ -464,6 +463,7 @@ app.get('/messages/:userId', async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch messages' });
     }
 });
+
 
 app.post('/send-message', async (req, res) => {
     console.log('[DEBUG] req.body:', req.body);
@@ -510,6 +510,129 @@ app.post('/mark-as-read/:userId', async (req, res) => {
         res.status(500).json({ error: 'Failed to mark messages as read' });
     }
 });
+
+
+// === Cron Job: Run every 15 minutes ===
+cron.schedule('*/15 * * * *', async () => {
+    console.log('🔄 Running scheduled broadcast task');
+
+    try {
+        const now = new Date();
+
+        const newsSnapshot = await db.collection('news')
+            .where('sent', '==', false)
+            .where('notifyTime', '<=', Timestamp.fromDate(now))
+            .get();
+
+        if (newsSnapshot.empty) {
+            console.log('✅ No scheduled news to broadcast.');
+            return;
+        }
+
+        const lineUsersSnapshot = await db.collection('lineUsers').get();
+        const lineUserIds = lineUsersSnapshot.docs.map(doc => doc.id);
+
+        const smsRecipientsSnapshot = await db.collection('smsRecipients').get();
+        const smsPhoneNumbers = smsRecipientsSnapshot.docs
+            .map(doc => doc.data().phoneNumber)
+            .filter(num => typeof num === 'string' && num.length > 0);
+
+        if (lineUserIds.length === 0) {
+            console.warn('⚠️ No LINE users found for LINE broadcast in cron job.');
+        }
+        if (smsPhoneNumbers.length === 0) {
+            console.warn('⚠️ No valid SMS recipients found in "smsRecipients" collection for SMS broadcast in cron job.');
+        }
+
+        for (const doc of newsSnapshot.docs) {
+            const data = doc.data();
+
+            if (data.notifyTime.toDate() <= now && data.repeatCount > 0) {
+                // Generate messages for this news item
+                const allGeneratedMessages = generateMessages(
+                    data.initialNotifyTime.toDate(), // ใช้ initialNotifyTime เป็น Base time สำหรับการ generate ข้อความ
+                    parseInt(data.fixHour),
+                    parseInt(data.fixMinute),
+                    parseInt(data.initialRepeatCount), // จำนวนรอบ LINE ทั้งหมด
+                    parseInt(data.frequencyHour),
+                    parseInt(data.frequencyMinute),
+                    data.village, data.topic, data.action, data.detail
+                );
+
+                // หาข้อความของรอบปัจจุบัน (Line) และ SMS
+                // ข้อความ LINE ควรจะเป็นสำหรับรอบปัจจุบันที่กำลังส่ง
+                // ข้อความ SMS จะมาจาก index 0 ของ allGeneratedMessages หากมี (และยังไม่เคยส่ง SMS)
+                const currentLineMessageIndex = data.initialRepeatCount - data.repeatCount;
+                const currentLineMessageData = allGeneratedMessages[currentLineMessageIndex];
+                
+                const initialSmsMessageData = allGeneratedMessages[0]; // SMS มาจากรอบแรกเสมอ
+
+                if (!currentLineMessageData) {
+                    console.error(`❌ Error: Could not find LINE message data for index ${currentLineMessageIndex} in cron job.`);
+                    continue; // ข้ามข่าวนี้ไป
+                }
+
+                // --- ส่งผ่าน LINE ---
+                if (lineUserIds.length > 0) {
+                    const linePushPromises = [];
+                    lineUserIds.forEach(userId => {
+                        linePushPromises.push(client.pushMessage(userId, {
+                            type: 'text',
+                            text: currentLineMessageData.lineMessage,
+                        }));
+                    });
+                    await Promise.all(linePushPromises);
+                    console.log(`📬 ส่งข่าว LINE ให้ผู้ใช้ ${lineUserIds.length} คน (จาก Cron Job, รอบที่ ${currentLineMessageIndex + 1})`);
+                }
+
+                // --- ส่งผ่าน SMS (ถ้า `sendSms` เป็น true ในข่าวสาร และยังไม่เคยส่ง และมีผู้รับ) ---
+                const shouldSendSms = data.sendSms !== undefined ? data.sendSms : true; // Default เป็น true
+                const hasSmsBeenSent = data.smsSentOnce || false; // Field ใหม่: true ถ้าส่ง SMS ไปแล้ว
+                
+                if (shouldSendSms && !hasSmsBeenSent && initialSmsMessageData.smsMessage && smsPhoneNumbers.length > 0 && THAI_BULK_SMS_API_KEY && THAI_BULK_SMS_API_SECRET && THAI_BULK_SMS_SENDER_NAME) {
+                    const smsSendPromises = [];
+                    for (const phoneNumber of smsPhoneNumbers) {
+                        smsSendPromises.push(sendSmsViaThaiBulkSms(phoneNumber, initialSmsMessageData.smsMessage));
+                    }
+                    await Promise.all(smsSendPromises);
+                    console.log(`📱 ส่ง SMS ให้ผู้ใช้ ${smsPhoneNumbers.length} คน (จาก Cron Job, ส่งครั้งแรก)`);
+                    
+                    // อัปเดต field smsSentOnce เป็น true หลังจากส่ง SMS ครั้งแรก
+                    await doc.ref.update({ smsSentOnce: true });
+                } else if (shouldSendSms && hasSmsBeenSent) {
+                    console.log(`✔️ SMS สำหรับข่าว "${data.topic}" ได้ถูกส่งไปแล้ว (Cron Job)`);
+                } else if (shouldSendSms && !hasSmsBeenSent && !initialSmsMessageData.smsMessage) {
+                    console.warn(`⚠️ SMS send enabled, but initialSmsMessageData.smsMessage is null for news: "${data.topic}".`);
+                } else if (shouldSendSms && !hasSmsBeenSent && smsPhoneNumbers.length === 0) {
+                    console.warn(`⚠️ SMS enabled for news "${data.topic}", but no SMS recipients found.`);
+                }
+
+
+                // คำนวณเวลารอบถัดไปของ LINE
+                const frequencyInMinutes = (parseInt(data.frequencyHour) * 60 + parseInt(data.frequencyMinute));
+                const nextNotifyTime = new Date(data.notifyTime.toDate().getTime() + frequencyInMinutes * 60 * 1000);
+
+                if (data.repeatCount > 1) {
+                    await doc.ref.update({
+                        notifyTime: Timestamp.fromDate(nextNotifyTime),
+                        repeatCount: data.repeatCount - 1,
+                    });
+                    console.log(`🔁 เตรียมรอบ LINE ถัดไปอีก ${data.repeatCount - 1} ครั้ง (Cron Job)`);
+                } else {
+                    await doc.ref.update({ sent: true }); // หรือลบเอกสาร
+                    console.log(`✅ รอบ LINE สุดท้ายแล้ว ปิดการส่ง (Cron Job)`);
+                }
+            } else if (data.notifyTime.toDate() > now) {
+                console.log(`🕒 ข่าว "${data.topic}" ยังไม่ถึงเวลาส่ง (เหลือ ${data.repeatCount} ครั้ง)`);
+            } else if (data.repeatCount === 0) {
+                console.log(`✔️ ข่าว "${data.topic}" ส่งครบทุกรอบแล้ว (ถูกตั้งค่า sent: true แล้ว)`);
+            }
+        }
+    } catch (err) {
+        console.error('❌ Error in cron job:', err);
+    }
+});
+
 
 // === Start Server ===
 const PORT = process.env.PORT || 3001;
